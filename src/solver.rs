@@ -14,7 +14,7 @@ use crate::events::{
 /// System of ordinary differential equations: dy/dt = f(t, y)
 pub trait OdeSystem<const N: usize> {
     /// Evaluate the right-hand side of the ODE system
-    /// 
+    ///
     /// # Arguments
     /// * `t` - Current time
     /// * `y` - Current state vector
@@ -49,7 +49,7 @@ pub struct Stats {
 }
 
 /// Step-size controller using an I-controller
-/// 
+///
 /// h_new = safety * h * error^(-1/p)
 /// where p = 8 for RKF78
 pub struct StepController {
@@ -80,14 +80,14 @@ impl StepController {
         if error == 0.0 {
             return self.max_factor;
         }
-        
+
         let factor = self.safety * error.powf(-self.exponent);
         factor.clamp(self.min_factor, self.max_factor)
     }
 }
 
 /// Tolerance specification for error control
-/// 
+///
 /// Error is computed as: |y8 - y7| / (atol + rtol * |y8|)
 #[derive(Debug, Clone)]
 pub struct Tolerances<const N: usize> {
@@ -105,7 +105,7 @@ impl<const N: usize> Tolerances<N> {
             rtol: [rtol; N],
         }
     }
-    
+
     /// Create tolerances with per-component values
     pub fn with_components(atol: [f64; N], rtol: [f64; N]) -> Self {
         Self { atol, rtol }
@@ -113,29 +113,29 @@ impl<const N: usize> Tolerances<N> {
 }
 
 /// Runge-Kutta-Fehlberg 7(8) integrator
-/// 
+///
 /// # Type Parameters
 /// * `N` - Dimension of the state vector
-/// 
+///
 /// # Example
 /// ```ignore
 /// use rkf78::{Rkf78, OdeSystem, Tolerances};
-/// 
+///
 /// struct HarmonicOscillator { omega: f64 }
-/// 
+///
 /// impl OdeSystem<2> for HarmonicOscillator {
 ///     fn rhs(&self, _t: f64, y: &[f64; 2], dydt: &mut [f64; 2]) {
 ///         dydt[0] = y[1];
 ///         dydt[1] = -self.omega * self.omega * y[0];
 ///     }
 /// }
-/// 
+///
 /// let tol = Tolerances::new(1e-12, 1e-12);
 /// let mut solver = Rkf78::new(tol);
-/// 
+///
 /// let sys = HarmonicOscillator { omega: 1.0 };
 /// let y0 = [1.0, 0.0];
-/// 
+///
 /// let (tf, yf) = solver.integrate(&sys, 0.0, &y0, 10.0, 0.1).unwrap();
 /// ```
 pub struct Rkf78<const N: usize> {
@@ -171,15 +171,15 @@ impl<const N: usize> Rkf78<N> {
             collected_events: Vec::new(),
         }
     }
-    
+
     /// Set minimum and maximum step sizes
     pub fn set_step_limits(&mut self, h_min: f64, h_max: f64) {
         self.h_min = h_min;
         self.h_max = h_max;
     }
-    
+
     /// Perform a single integration step
-    /// 
+    ///
     /// This computes the 13 stages, forms the 8th and 7th order solutions,
     /// estimates the error, and determines if the step should be accepted.
     pub fn step<S: OdeSystem<N>>(
@@ -190,23 +190,23 @@ impl<const N: usize> Rkf78<N> {
         h: f64,
     ) -> StepResult<N> {
         let h = h.signum() * h.abs().clamp(self.h_min, self.h_max);
-        
+
         // Compute all 13 stages
         self.compute_stages(sys, t, y, h);
-        
+
         // Compute 8th order solution
         let y8 = self.compute_solution(y, h);
-        
+
         // Compute error estimate
         let error = self.compute_error(&y8, h);
-        
+
         // Determine acceptance
         let accepted = error <= 1.0;
-        
+
         // Compute next step size (always positive magnitude)
         let factor = self.controller.compute_factor(error);
         let h_next = (h.abs() * factor).clamp(self.h_min, self.h_max);
-        
+
         // Update statistics
         self.stats.fn_evals += STAGES as u64;
         if accepted {
@@ -214,7 +214,7 @@ impl<const N: usize> Rkf78<N> {
         } else {
             self.stats.rejected_steps += 1;
         }
-        
+
         StepResult {
             y: y8,
             t: t + h,
@@ -223,16 +223,16 @@ impl<const N: usize> Rkf78<N> {
             accepted,
         }
     }
-    
+
     /// Integrate from t0 to tf
-    /// 
+    ///
     /// # Arguments
     /// * `sys` - The ODE system to integrate
     /// * `t0` - Initial time
     /// * `y0` - Initial state
     /// * `tf` - Final time
     /// * `h0` - Initial step size guess
-    /// 
+    ///
     /// # Returns
     /// * `Ok((t_final, y_final))` on success
     /// * `Err(IntegrationError)` on failure
@@ -255,15 +255,15 @@ impl<const N: usize> Rkf78<N> {
 
         let direction = (tf - t0).signum();
         let mut step_count = 0u64;
-        
+
         while (tf - t) * direction > self.h_min {
             // Don't overshoot the endpoint
             if (t + h - tf) * direction > 0.0 {
                 h = tf - t;
             }
-            
+
             let result = self.step(sys, t, &y, h);
-            
+
             if result.accepted {
                 t = result.t;
                 y = result.y;
@@ -278,10 +278,11 @@ impl<const N: usize> Rkf78<N> {
             if step_count > self.max_steps {
                 return Err(IntegrationError::MaxStepsExceeded);
             }
-            
+
             // Check for step size too small: if the step was rejected and
             // the next step size is already at h_min, we can't make progress
-            if !result.accepted && result.h_next <= self.h_min && (tf - t) * direction > self.h_min {
+            if !result.accepted && result.h_next <= self.h_min && (tf - t) * direction > self.h_min
+            {
                 return Err(IntegrationError::StepSizeTooSmall {
                     t,
                     h: result.h_next,
@@ -291,15 +292,15 @@ impl<const N: usize> Rkf78<N> {
 
         Ok((t, y))
     }
-    
+
     /// Compute all 13 stages
     #[allow(clippy::needless_range_loop)]
     fn compute_stages<S: OdeSystem<N>>(&mut self, sys: &S, t: f64, y: &[f64; N], h: f64) {
         let mut y_temp = [0.0; N];
-        
+
         // Stage 0: k[0] = f(t, y)
         sys.rhs(t, y, &mut self.k[0]);
-        
+
         // Stages 1-12
         for i in 1..STAGES {
             // y_temp = y + h * sum_{j=0}^{i-1} a[i][j] * k[j]
@@ -310,17 +311,17 @@ impl<const N: usize> Rkf78<N> {
                 }
                 y_temp[n] = y[n] + h * sum;
             }
-            
+
             // k[i] = f(t + c[i]*h, y_temp)
             sys.rhs(t + C[i] * h, &y_temp, &mut self.k[i]);
         }
     }
-    
+
     /// Compute the 8th order solution from the stages
     #[allow(clippy::needless_range_loop)]
     fn compute_solution(&self, y: &[f64; N], h: f64) -> [f64; N] {
         let mut y_new = [0.0; N];
-        
+
         for n in 0..N {
             let mut sum = 0.0;
             for i in 0..STAGES {
@@ -328,12 +329,12 @@ impl<const N: usize> Rkf78<N> {
             }
             y_new[n] = y[n] + h * sum;
         }
-        
+
         y_new
     }
-    
+
     /// Compute the normalized error estimate
-    /// 
+    ///
     /// Uses the infinity norm of the scaled error:
     /// error = max_i( |h * sum_j (b[j] - b_hat[j]) * k[j][i]| / scale[i] )
     /// where scale[i] = atol[i] + rtol[i] * |y8[i]|
@@ -348,17 +349,17 @@ impl<const N: usize> Rkf78<N> {
                 err_n += B_ERR[i] * self.k[i][n];
             }
             err_n *= h;
-            
+
             // Scale by tolerance
             let scale = self.tol.atol[n] + self.tol.rtol[n] * y8[n].abs();
             let scaled_err = err_n.abs() / scale;
-            
+
             max_err = max_err.max(scaled_err);
         }
-        
+
         max_err
     }
-    
+
     /// Reset statistics
     pub fn reset_stats(&mut self) {
         self.stats = Stats::default();
@@ -506,15 +507,7 @@ impl<const N: usize> Rkf78<N> {
                 if sign_change_detected(g_prev, g_new, config.direction) {
                     // Event detected! Use Brent's method to find precise time
                     let event_result = self.find_event_root(
-                        sys,
-                        event,
-                        t,
-                        &y,
-                        result.t,
-                        &result.y,
-                        g_prev,
-                        g_new,
-                        config,
+                        sys, event, t, &y, result.t, &result.y, g_prev, g_new, config,
                     )?;
 
                     match config.action {
@@ -554,8 +547,12 @@ impl<const N: usize> Rkf78<N> {
                 return Err(IntegrationError::MaxStepsExceeded);
             }
 
-            if !result.accepted && result.h_next <= self.h_min && (tf - t) * direction > self.h_min {
-                return Err(IntegrationError::StepSizeTooSmall { t, h: result.h_next });
+            if !result.accepted && result.h_next <= self.h_min && (tf - t) * direction > self.h_min
+            {
+                return Err(IntegrationError::StepSizeTooSmall {
+                    t,
+                    h: result.h_next,
+                });
             }
         }
 
@@ -727,178 +724,189 @@ impl std::error::Error for IntegrationError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     /// Harmonic oscillator: y'' + ω²y = 0
     /// State: [y, y']
     struct HarmonicOscillator {
         omega: f64,
     }
-    
+
     impl OdeSystem<2> for HarmonicOscillator {
         fn rhs(&self, _t: f64, y: &[f64; 2], dydt: &mut [f64; 2]) {
             dydt[0] = y[1];
             dydt[1] = -self.omega * self.omega * y[0];
         }
     }
-    
+
     #[test]
     fn test_harmonic_oscillator() {
         let omega = 1.0;
         let sys = HarmonicOscillator { omega };
-        
+
         // Initial conditions: y(0) = 1, y'(0) = 0
         // Exact solution: y = cos(ωt), y' = -ω*sin(ωt)
         let y0 = [1.0, 0.0];
         let t0 = 0.0;
         let tf = 2.0 * std::f64::consts::PI; // One period
-        
+
         let tol = Tolerances::new(1e-12, 1e-12);
         let mut solver = Rkf78::new(tol);
-        
+
         let (t_final, y_final) = solver.integrate(&sys, t0, &y0, tf, 0.1).unwrap();
-        
+
         // Should return to initial conditions after one period
         assert!((t_final - tf).abs() < 1e-10);
-        assert!((y_final[0] - 1.0).abs() < 1e-10, "y(2π) = {}, expected 1.0", y_final[0]);
-        assert!(y_final[1].abs() < 1e-10, "y'(2π) = {}, expected 0.0", y_final[1]);
-        
+        assert!(
+            (y_final[0] - 1.0).abs() < 1e-10,
+            "y(2π) = {}, expected 1.0",
+            y_final[0]
+        );
+        assert!(
+            y_final[1].abs() < 1e-10,
+            "y'(2π) = {}, expected 0.0",
+            y_final[1]
+        );
+
         println!("Harmonic oscillator test passed:");
         println!("  Final y = [{:.15}, {:.15}]", y_final[0], y_final[1]);
         println!("  Stats: {:?}", solver.stats);
     }
-    
+
     #[test]
     fn test_exponential_decay() {
         // y' = -y, y(0) = 1
         // Exact: y = exp(-t)
         struct ExpDecay;
-        
+
         impl OdeSystem<1> for ExpDecay {
             fn rhs(&self, _t: f64, y: &[f64; 1], dydt: &mut [f64; 1]) {
                 dydt[0] = -y[0];
             }
         }
-        
+
         let sys = ExpDecay;
         let y0 = [1.0];
         let tf = 5.0;
-        
+
         let tol = Tolerances::new(1e-14, 1e-14);
         let mut solver = Rkf78::new(tol);
-        
+
         let (_, y_final) = solver.integrate(&sys, 0.0, &y0, tf, 0.1).unwrap();
         let exact = (-tf).exp();
-        
+
         let rel_error = (y_final[0] - exact).abs() / exact;
         // Error accumulates over integration interval; 1e-11 is appropriate for tol=1e-14 over t=5
         assert!(rel_error < 1e-11, "Relative error {} too large", rel_error);
-        
+
         println!("Exponential decay test passed:");
         println!("  y({}) = {:.15}, exact = {:.15}", tf, y_final[0], exact);
         println!("  Relative error: {:.3e}", rel_error);
     }
-    
+
     /// Two-body problem for testing energy conservation
     struct TwoBody {
-        mu: f64,  // GM parameter
+        mu: f64, // GM parameter
     }
-    
+
     impl OdeSystem<6> for TwoBody {
         fn rhs(&self, _t: f64, y: &[f64; 6], dydt: &mut [f64; 6]) {
             let x = y[0];
             let y_pos = y[1];
             let z = y[2];
-            
-            let r = (x*x + y_pos*y_pos + z*z).sqrt();
+
+            let r = (x * x + y_pos * y_pos + z * z).sqrt();
             let r3 = r * r * r;
             let mu_r3 = self.mu / r3;
-            
+
             // Velocity components
             dydt[0] = y[3];
             dydt[1] = y[4];
             dydt[2] = y[5];
-            
+
             // Acceleration components
             dydt[3] = -mu_r3 * x;
             dydt[4] = -mu_r3 * y_pos;
             dydt[5] = -mu_r3 * z;
         }
     }
-    
+
     #[test]
     fn test_two_body_energy_conservation() {
         let mu = 398600.4418; // km³/s² (Earth)
         let sys = TwoBody { mu };
-        
+
         // Circular orbit at 6878 km (500 km altitude)
         let r0 = 6878.0;
         let v0 = (mu / r0).sqrt();
-        
+
         // Initial state: [x, y, z, vx, vy, vz]
         let y0 = [r0, 0.0, 0.0, 0.0, v0, 0.0];
-        
+
         // Integrate for one orbital period
         let period = 2.0 * std::f64::consts::PI * (r0.powi(3) / mu).sqrt();
-        
+
         let tol = Tolerances::new(1e-12, 1e-12);
         let mut solver = Rkf78::new(tol);
-        
+
         // Compute initial energy
         let compute_energy = |y: &[f64; 6]| {
-            let r = (y[0]*y[0] + y[1]*y[1] + y[2]*y[2]).sqrt();
-            let v2 = y[3]*y[3] + y[4]*y[4] + y[5]*y[5];
+            let r = (y[0] * y[0] + y[1] * y[1] + y[2] * y[2]).sqrt();
+            let v2 = y[3] * y[3] + y[4] * y[4] + y[5] * y[5];
             0.5 * v2 - mu / r
         };
-        
+
         let e0 = compute_energy(&y0);
-        
+
         let (_, y_final) = solver.integrate(&sys, 0.0, &y0, period, 60.0).unwrap();
-        
+
         let e_final = compute_energy(&y_final);
         let rel_energy_error = (e_final - e0).abs() / e0.abs();
-        
+
         // For RKF78 with tol=1e-12, energy drift should be very small
-        assert!(rel_energy_error < 1e-10, 
-            "Energy drift {} exceeds threshold", rel_energy_error);
-        
+        assert!(
+            rel_energy_error < 1e-10,
+            "Energy drift {} exceeds threshold",
+            rel_energy_error
+        );
+
         println!("Two-body energy conservation test passed:");
         println!("  Initial energy: {:.15e} km²/s²", e0);
         println!("  Final energy:   {:.15e} km²/s²", e_final);
         println!("  Relative drift: {:.3e}", rel_energy_error);
         println!("  Stats: {:?}", solver.stats);
     }
-    
+
     #[test]
     fn test_order_of_convergence() {
         // Test that halving step size reduces error by ~2^8 = 256
         // Use a problem with known solution
-        
+
         struct SinusoidalODE;
         impl OdeSystem<1> for SinusoidalODE {
             fn rhs(&self, t: f64, _y: &[f64; 1], dydt: &mut [f64; 1]) {
-                dydt[0] = t.cos();  // y' = cos(t), y = sin(t) + C
+                dydt[0] = t.cos(); // y' = cos(t), y = sin(t) + C
             }
         }
-        
+
         let sys = SinusoidalODE;
-        let y0 = [0.0];  // y(0) = 0, so y = sin(t)
+        let y0 = [0.0]; // y(0) = 0, so y = sin(t)
         let tf = 1.0;
-        
+
         // Very loose tolerance to force fixed-ish step behavior
         let tol = Tolerances::new(1e-4, 1e-4);
-        
+
         // This is more of a sanity check than a rigorous order test
         // A full order test would need to control step size more carefully
         let mut solver = Rkf78::new(tol);
         let (_, y_final) = solver.integrate(&sys, 0.0, &y0, tf, 0.1).unwrap();
-        
+
         let exact = tf.sin();
         let error = (y_final[0] - exact).abs();
-        
+
         println!("Order convergence test:");
         println!("  y({}) = {:.15}, exact = {:.15}", tf, y_final[0], exact);
         println!("  Error: {:.3e}", error);
-        
+
         // With these tolerances, error should be quite small
         assert!(error < 1e-4);
     }
@@ -1398,7 +1406,15 @@ mod tests {
         };
 
         let result = solver
-            .integrate_to_event(&LinearGrowth, &ZeroCrossing, &config, 0.0, &[-0.001], 10.0, 0.1)
+            .integrate_to_event(
+                &LinearGrowth,
+                &ZeroCrossing,
+                &config,
+                0.0,
+                &[-0.001],
+                10.0,
+                0.1,
+            )
             .unwrap();
 
         match result {
@@ -1491,7 +1507,11 @@ mod tests {
         match result {
             IntegrationResult::Completed { t, y } => {
                 assert!((t - 5.0).abs() < 1e-10, "Should reach tf=5, got t={}", t);
-                assert!((y[0] - 4.0).abs() < 1e-10, "y(5) should be 4.0, got {}", y[0]);
+                assert!(
+                    (y[0] - 4.0).abs() < 1e-10,
+                    "y(5) should be 4.0, got {}",
+                    y[0]
+                );
             }
             IntegrationResult::Event(_) => {
                 panic!("EventAction::Continue should not return Event");
