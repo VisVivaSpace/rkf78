@@ -10,6 +10,7 @@
 //! - **Event finding** with Brent's method for precise root location
 //! - Based on NASA TR R-287 (Erwin Fehlberg, 1968)
 //! - Minimal dependencies (no external linear algebra required)
+//! - **GPU batch propagation** via `wgpu` compute shaders (optional `gpu` feature, `f32` precision)
 //! - Designed for integration into larger astrodynamics libraries
 //!
 //! ## Basic Usage
@@ -47,7 +48,7 @@
 //! - Eclipse entry/exit
 //! - Altitude threshold crossings
 //!
-//! ```rust
+//! ```rust,ignore
 //! use rkf78::{Rkf78, OdeSystem, Tolerances, EventFunction, EventConfig, EventDirection, IntegrationResult};
 //!
 //! // Define an event (e.g., detect when y[0] crosses a threshold)
@@ -66,16 +67,16 @@
 //!     ..Default::default()
 //! };
 //!
-//! // // Integrate with event detection
-//! // match solver.integrate_to_event(&sys, &event, &config, t0, &y0, tf, h0) {
-//! //     Ok(IntegrationResult::Event(ev)) => {
-//! //         println!("Event at t = {}, y = {:?}", ev.t, ev.y);
-//! //     }
-//! //     Ok(IntegrationResult::Completed { t, y }) => {
-//! //         println!("Reached tf = {} without event", t);
-//! //     }
-//! //     Err(e) => eprintln!("Error: {}", e),
-//! // }
+//! // Integrate with event detection (sys implements OdeSystem<2>)
+//! match solver.integrate_to_event(&sys, &event, &config, t0, &y0, tf, h0) {
+//!     Ok(IntegrationResult::Event(ev)) => {
+//!         println!("Event at t = {}, y = {:?}", ev.t, ev.y);
+//!     }
+//!     Ok(IntegrationResult::Completed { t, y }) => {
+//!         println!("Reached tf = {} without event", t);
+//!     }
+//!     Err(e) => eprintln!("Error: {}", e),
+//! }
 //! ```
 //!
 //! ## Tolerance Selection
@@ -93,8 +94,7 @@
 //!
 //! For a detailed explanation of the RKF7(8) mathematics — Butcher tableau,
 //! error estimation, adaptive step-size control, and Brent's method for event
-//! detection — see [`docs/algorithm.md`](https://github.com/your-org/astrodynamics/blob/master/docs/algorithm.md)
-//! in the repository.
+//! detection — see `docs/algorithm.md` in the repository.
 //!
 //! ## Integration with Wisdom-Holman
 //!
@@ -102,6 +102,14 @@
 //! in a Wisdom-Holman style mixed-variable symplectic scheme. In that
 //! context, RKF78 handles the perturbation "kicks" while the Keplerian
 //! motion is solved analytically.
+//!
+//! ## GPU Batch Propagation
+//!
+//! With the `gpu` feature enabled, the crate provides [`gpu::GpuBatchPropagator`] for
+//! propagating thousands of trajectories in parallel on the GPU via `wgpu` compute shaders.
+//! The GPU solver uses `f32` precision (vs `f64` on CPU), making it suitable for Monte Carlo
+//! studies, conjunction screening, and trade studies where throughput matters more than
+//! last-digit precision. Users supply their own WGSL force model at construction time.
 //!
 //! ## References
 //!

@@ -16,6 +16,7 @@ Zero-dependency Runge-Kutta-Fehlberg 7(8) ODE integrator in Rust. Solves `dy/dt 
 | `src/coefficients.rs` | Butcher tableau constants from NASA TR R-287 Table X |
 | `src/solver.rs` | Core integrator: `Rkf78<N>`, `OdeSystem<N>`, tolerances, stepping, `integrate()`, `integrate_to_event()` |
 | `src/events.rs` | Event detection: `EventFunction<N>`, `BrentSolver`, sign-change monitoring |
+| `src/gpu/` | GPU batch propagation via `wgpu` compute shaders (feature-gated: `gpu`) |
 
 ## API Surface
 
@@ -170,13 +171,33 @@ let result = solver.integrate_to_event(&sys, &event, &config, t0, &y0, tf, h0)?;
 let (tf, yf) = solver.integrate(&sys, 10.0, &y0, 0.0, -0.1)?;
 ```
 
+### GPU Batch Propagation (`gpu` feature)
+
+```rust
+use rkf78::gpu::{GpuBatchPropagator, GpuError, GpuState, GpuIntegrationParams, TrajectoryStatus};
+
+// GpuBatchPropagator — propagates many trajectories in parallel on the GPU
+pub struct GpuBatchPropagator { /* private */ }
+impl GpuBatchPropagator {
+    pub fn new(force_model_wgsl: &str) -> Result<Self, GpuError>;
+    pub fn propagate_batch(&self, states: &[GpuState], params: &GpuIntegrationParams)
+        -> (Vec<GpuState>, Vec<TrajectoryStatus>);
+}
+
+// GpuState — 32 bytes, f32 precision (position, velocity, epoch)
+// GpuIntegrationParams — 48 bytes (mu, t_final, tolerances, step limits)
+// TrajectoryStatus — 16 bytes (status: 0=active/1=completed/2=failed, steps, rejected, h_final)
+// GpuError — AdapterNotFound | DeviceCreationFailed(String)
+```
+
 ## Gotchas
 
 1. **h0 sign must match direction**: `h0` must be positive when `tf > t0`, negative when `tf < t0`
 2. **Tolerances must be positive**: `atol > 0` and `rtol >= 0` (both finite)
-3. **Event interpolation is linear**: event-time accuracy depends on step size near the event; dense output is not yet implemented
+3. **Event state uses Hermite cubic interpolation**: O(h⁴) accuracy in the event state; event time is found to `root_tol` precision by Brent's method
 4. **Not for stiff problems**: explicit method; step size will collapse on stiff systems
 5. **collected_events is cleared** at the start of each `integrate_to_event` call
+6. **GPU uses f32 precision** (~7 significant digits) vs CPU f64 (~15 digits); GPU energy conservation is ~1e-6 vs CPU ~1e-12
 
 ## Tolerance Quick-Reference
 
