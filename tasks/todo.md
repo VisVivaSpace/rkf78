@@ -250,3 +250,40 @@ All 6 GPU integration tests pass. Results:
 - [x] `#[derive(Clone)]` on `StepController`
 - [x] `#[derive(Clone)]` on `Rkf78<N>`
 - [x] Doc comment on `integrate_to_event` noting linear interpolation O(h²) accuracy
+
+## Review
+
+### Summary
+
+All 6 phases complete. Addressed all actionable findings from the aerospace numerical methods and Rust quality reviews.
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `src/gpu/shader.wgsl` | Removed hardcoded `two_body_accel`/`compute_rhs`; added user-supplied function contract comment |
+| `src/gpu/pipeline.rs` | `new()` takes `force_model_wgsl: &str`, prepends to engine shader; returns `Result<Self, GpuError>` |
+| `src/gpu/mod.rs` | `GpuBatchPropagator::new()` takes force model WGSL, returns `Result`; removed `Default`; added `GpuError` enum |
+| `src/events.rs` | Defensive `fa != fb` guard in Brent's IQI/secant; tightened 3 test tolerances; 1 new test |
+| `src/solver.rs` | `Clone` on `Rkf78`/`StepController`; O(h²) interpolation doc; tightened 3 test tolerances; 2 new tests |
+| `tests/gpu_integration.rs` | `TWO_BODY_WGSL` const; all constructors use `.new(WGSL).unwrap()` |
+| `examples/gpu_two_body.rs` | New — standalone GPU two-body example |
+| `Cargo.toml` | `required-features = ["gpu"]` for example |
+| `CLAUDE.md` | Dev environment note (Mac Studio with GPU); updated build commands |
+
+### Production Code Changes (non-test)
+
+- **GPU bring-your-own-RHS**: Force model removed from shader, user supplies WGSL at pipeline creation
+- **Brent division-by-zero guard**: 3-line change adding bisection fallback when `fa == fb`
+- **GPU error handling**: `GpuError` enum, constructors return `Result` instead of panicking
+- **API ergonomics**: `Clone` on `Rkf78<N>` and `StepController`
+- **Documentation**: Linear interpolation limitation on `integrate_to_event`
+
+### Test Changes
+
+- 3 new tests: `test_brent_equal_function_values`, `test_tolerance_sensitivity`, `test_high_eccentricity_orbit_energy`
+- 5 tolerance tightenings (all verified against actual solver precision with 5x margins)
+
+### Final State
+
+56 tests (50 unit + 6 GPU integration), all passing. Clippy clean. Fmt clean.
