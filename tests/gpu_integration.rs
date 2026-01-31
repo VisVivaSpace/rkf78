@@ -84,7 +84,7 @@ fn test_circular_orbit_gpu_vs_cpu() {
     let period = orbital_period(r0) as f32;
 
     // GPU propagation
-    let propagator = GpuBatchPropagator::new(TWO_BODY_WGSL);
+    let propagator = GpuBatchPropagator::new(TWO_BODY_WGSL).unwrap();
     let state = circular_orbit_state(r0 as f32);
     let params = leo_params(period);
     let (gpu_states, gpu_statuses) = propagator.propagate_batch(&[state], &params);
@@ -128,7 +128,7 @@ fn test_batch_independence() {
     let r0 = 6878.0f32;
     let period = orbital_period(r0 as f64) as f32;
 
-    let propagator = GpuBatchPropagator::new(TWO_BODY_WGSL);
+    let propagator = GpuBatchPropagator::new(TWO_BODY_WGSL).unwrap();
     let state = circular_orbit_state(r0);
     let params = leo_params(period);
 
@@ -169,7 +169,7 @@ fn test_energy_conservation_gpu() {
     let r0 = 6878.0f32;
     let period = orbital_period(r0 as f64) as f32;
 
-    let propagator = GpuBatchPropagator::new(TWO_BODY_WGSL);
+    let propagator = GpuBatchPropagator::new(TWO_BODY_WGSL).unwrap();
     let state = circular_orbit_state(r0);
     let params = leo_params(period);
 
@@ -209,7 +209,7 @@ fn test_elliptical_orbit_gpu_vs_cpu() {
     let v_peri = (MU * (2.0 / rp - 1.0 / a)).sqrt();
 
     // GPU
-    let propagator = GpuBatchPropagator::new(TWO_BODY_WGSL);
+    let propagator = GpuBatchPropagator::new(TWO_BODY_WGSL).unwrap();
     let gpu_state = GpuState {
         position: [rp as f32, 0.0, 0.0],
         velocity: [0.0, v_peri as f32, 0.0],
@@ -253,7 +253,7 @@ fn test_step_rejection_gpu() {
     let r0 = 6878.0f32;
     let period = orbital_period(r0 as f64) as f32;
 
-    let propagator = GpuBatchPropagator::new(TWO_BODY_WGSL);
+    let propagator = GpuBatchPropagator::new(TWO_BODY_WGSL).unwrap();
     let state = circular_orbit_state(r0);
 
     // Use a very large initial step size to force rejections
@@ -281,7 +281,7 @@ fn test_multi_dispatch_completion() {
     let r0 = 6878.0f32;
     let period = orbital_period(r0 as f64) as f32;
 
-    let propagator = GpuBatchPropagator::new(TWO_BODY_WGSL);
+    let propagator = GpuBatchPropagator::new(TWO_BODY_WGSL).unwrap();
     let state = circular_orbit_state(r0);
 
     // Use very small max_steps_per_dispatch to force multiple dispatches

@@ -2,6 +2,8 @@
 
 use std::borrow::Cow;
 
+use super::GpuError;
+
 /// Holds the wgpu device, queue, compute pipeline, and bind group layout.
 pub struct Rkf78GpuPipeline {
     /// The wgpu device.
@@ -24,11 +26,11 @@ impl Rkf78GpuPipeline {
     /// This is prepended to the RKF78 engine shader at pipeline creation time.
     ///
     /// Uses `pollster::block_on` for synchronous initialization.
-    pub fn new(force_model_wgsl: &str) -> Self {
+    pub fn new(force_model_wgsl: &str) -> Result<Self, GpuError> {
         pollster::block_on(Self::new_async(force_model_wgsl.to_owned()))
     }
 
-    async fn new_async(force_model_wgsl: String) -> Self {
+    async fn new_async(force_model_wgsl: String) -> Result<Self, GpuError> {
         let instance = wgpu::Instance::default();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -36,7 +38,7 @@ impl Rkf78GpuPipeline {
                 ..Default::default()
             })
             .await
-            .expect("Failed to find a suitable GPU adapter");
+            .ok_or(GpuError::AdapterNotFound)?;
 
         let (device, queue) = adapter
             .request_device(
@@ -49,7 +51,7 @@ impl Rkf78GpuPipeline {
                 None,
             )
             .await
-            .expect("Failed to create GPU device");
+            .map_err(|e| GpuError::DeviceCreationFailed(e.to_string()))?;
 
         let engine = include_str!("shader.wgsl");
         let full_shader = format!("{}\n{}", force_model_wgsl, engine);
@@ -124,11 +126,11 @@ impl Rkf78GpuPipeline {
             cache: None,
         });
 
-        Self {
+        Ok(Self {
             device,
             queue,
             pipeline,
             bind_group_layout,
-        }
+        })
     }
 }

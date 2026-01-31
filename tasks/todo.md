@@ -230,10 +230,10 @@ All 6 GPU integration tests pass. Results:
 - [x] Add `test_brent_equal_function_values` test
 
 ## Phase 3: GPU Constructors Return Result
-- [ ] Add `GpuError` enum with `Display` + `Error`
-- [ ] Change `Rkf78GpuPipeline::new()` and `new_async()` to return `Result`
-- [ ] Change `GpuBatchPropagator::new()` to return `Result`
-- [ ] Update all GPU test calls to `.unwrap()`
+- [x] Add `GpuError` enum with `Display` + `Error`
+- [x] Change `Rkf78GpuPipeline::new()` and `new_async()` to return `Result`
+- [x] Change `GpuBatchPropagator::new()` to return `Result`
+- [x] Update all GPU test calls to `.unwrap()`
 
 ## Phase 4: Tighten Test Tolerances
 - [ ] `test_100_orbit_energy_conservation`: 1e-7 → 1e-8

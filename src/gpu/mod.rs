@@ -25,6 +25,26 @@ pub use types::{GpuIntegrationParams, GpuState, TrajectoryStatus};
 use pipeline::Rkf78GpuPipeline;
 use wgpu::util::DeviceExt;
 
+/// Errors from GPU initialization.
+#[derive(Debug)]
+pub enum GpuError {
+    /// No suitable GPU adapter was found.
+    AdapterNotFound,
+    /// Failed to create GPU device.
+    DeviceCreationFailed(String),
+}
+
+impl std::fmt::Display for GpuError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GpuError::AdapterNotFound => write!(f, "No suitable GPU adapter found"),
+            GpuError::DeviceCreationFailed(msg) => write!(f, "GPU device creation failed: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for GpuError {}
+
 /// GPU batch propagator for parallel trajectory integration.
 ///
 /// Wraps a wgpu compute pipeline and provides a synchronous API for
@@ -45,7 +65,7 @@ use wgpu::util::DeviceExt;
 ///     return d;
 /// }
 /// "#;
-/// let propagator = GpuBatchPropagator::new(two_body_wgsl);
+/// let propagator = GpuBatchPropagator::new(two_body_wgsl).unwrap();
 /// ```
 pub struct GpuBatchPropagator {
     pipeline: Rkf78GpuPipeline,
@@ -57,12 +77,13 @@ impl GpuBatchPropagator {
     /// # Arguments
     /// * `force_model_wgsl` — WGSL source defining `fn compute_rhs(pos: vec3<f32>, vel: vec3<f32>, mu: f32) -> Deriv`
     ///
-    /// Initializes the wgpu instance, adapter, device, and compiles the
-    /// compute shader. Panics if no suitable GPU is found.
-    pub fn new(force_model_wgsl: &str) -> Self {
-        Self {
-            pipeline: Rkf78GpuPipeline::new(force_model_wgsl),
-        }
+    /// # Errors
+    /// Returns `GpuError::AdapterNotFound` if no suitable GPU is available,
+    /// or `GpuError::DeviceCreationFailed` if the device cannot be created.
+    pub fn new(force_model_wgsl: &str) -> Result<Self, GpuError> {
+        Ok(Self {
+            pipeline: Rkf78GpuPipeline::new(force_model_wgsl)?,
+        })
     }
 
     /// Propagate a batch of trajectories to `params.t_final`.

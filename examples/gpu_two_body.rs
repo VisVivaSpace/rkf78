@@ -62,7 +62,7 @@ fn main() {
         period
     );
 
-    let propagator = GpuBatchPropagator::new(TWO_BODY_WGSL);
+    let propagator = GpuBatchPropagator::new(TWO_BODY_WGSL).expect("GPU initialization failed");
     let (final_states, statuses) = propagator.propagate_batch(&states, &params);
 
     println!("\nResults:");
