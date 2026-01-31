@@ -7,7 +7,8 @@
 
 use crate::coefficients::{A, B, B_ERR, C, STAGES};
 use crate::events::{
-    sign_change_detected, BrentError, BrentSolver, EventConfig, EventFunction, EventResult,
+    sign_change_detected, BrentError, BrentSolver, EventAction, EventConfig, EventFunction,
+    EventResult,
 };
 
 /// System of ordinary differential equations: dy/dt = f(t, y)
@@ -152,6 +153,8 @@ pub struct Rkf78<const N: usize> {
     k: [[f64; N]; STAGES],
     /// Integration statistics
     pub stats: Stats,
+    /// Events collected during `integrate_to_event` with `EventAction::Continue`
+    pub collected_events: Vec<EventResult<N>>,
 }
 
 impl<const N: usize> Rkf78<N> {
@@ -165,6 +168,7 @@ impl<const N: usize> Rkf78<N> {
             max_steps: 10_000_000,
             k: [[0.0; N]; STAGES],
             stats: Stats::default(),
+            collected_events: Vec::new(),
         }
     }
     
@@ -465,6 +469,7 @@ impl<const N: usize> Rkf78<N> {
             return Ok(IntegrationResult::Completed { t: t0, y: *y0 });
         }
         self.validate_inputs(t0, y0, tf, h0)?;
+        self.collected_events.clear();
 
         let mut t = t0;
         let mut y = *y0;
@@ -508,7 +513,23 @@ impl<const N: usize> Rkf78<N> {
                         config,
                     )?;
 
-                    return Ok(IntegrationResult::Event(event_result));
+                    match config.action {
+                        EventAction::Stop => {
+                            return Ok(IntegrationResult::Event(event_result));
+                        }
+                        EventAction::Continue => {
+                            // Record event, accept the full step (not the event point)
+                            // so we move past the zero crossing and don't re-detect it
+                            self.collected_events.push(event_result);
+                            _t_prev = t;
+                            _y_prev = y;
+                            t = result.t;
+                            y = result.y;
+                            g_prev = g_new;
+                            h = result.h_next * direction;
+                            continue;
+                        }
+                    }
                 }
 
                 // Update state
@@ -879,7 +900,7 @@ mod tests {
 
     // ==================== Event Finding Tests ====================
 
-    use crate::events::{EventConfig, EventDirection, EventFunction};
+    use crate::events::{EventAction, EventConfig, EventDirection, EventFunction};
 
     /// Simple event: detect when y crosses a threshold
     struct ThresholdEvent {
@@ -1424,6 +1445,126 @@ mod tests {
             }
             IntegrationResult::Completed { .. } => {
                 panic!("Expected event near end");
+            }
+        }
+    }
+
+    // ==================== Phase 4: EventAction::Continue Tests ====================
+
+    #[test]
+    fn test_event_action_continue() {
+        // y' = 1, y(0) = -1. Event: y = 0 (rising). With Continue, integration
+        // should record the event at t ≈ 1 and keep going to tf = 5.
+        struct LinearODE;
+        impl OdeSystem<1> for LinearODE {
+            fn rhs(&self, _t: f64, _y: &[f64; 1], dydt: &mut [f64; 1]) {
+                dydt[0] = 1.0;
+            }
+        }
+
+        struct ZeroCross;
+        impl EventFunction<1> for ZeroCross {
+            fn eval(&self, _t: f64, y: &[f64; 1]) -> f64 {
+                y[0]
+            }
+        }
+
+        let config = EventConfig {
+            direction: EventDirection::Rising,
+            action: EventAction::Continue,
+            ..Default::default()
+        };
+
+        let tol = Tolerances::new(1e-12, 1e-12);
+        let mut solver = Rkf78::new(tol);
+
+        let result = solver
+            .integrate_to_event(&LinearODE, &ZeroCross, &config, 0.0, &[-1.0], 5.0, 0.1)
+            .unwrap();
+
+        // Should complete to tf (not stop at event)
+        match result {
+            IntegrationResult::Completed { t, y } => {
+                assert!((t - 5.0).abs() < 1e-10, "Should reach tf=5, got t={}", t);
+                assert!((y[0] - 4.0).abs() < 1e-10, "y(5) should be 4.0, got {}", y[0]);
+            }
+            IntegrationResult::Event(_) => {
+                panic!("EventAction::Continue should not return Event");
+            }
+        }
+
+        // Should have collected exactly 1 event
+        assert_eq!(
+            solver.collected_events.len(),
+            1,
+            "Expected 1 collected event, got {}",
+            solver.collected_events.len()
+        );
+        let ev = &solver.collected_events[0];
+        assert!(
+            (ev.t - 1.0).abs() < 0.01,
+            "Event time {} should be near 1.0",
+            ev.t
+        );
+    }
+
+    #[test]
+    fn test_event_action_continue_multiple() {
+        // Harmonic oscillator: y = cos(t), y' = -sin(t)
+        // Event: y[0] = 0 (any direction). Zeros at π/2, 3π/2, 5π/2, 7π/2 in [0, 4π]
+        let sys = HarmonicOscillator { omega: 1.0 };
+
+        struct PositionZero;
+        impl EventFunction<2> for PositionZero {
+            fn eval(&self, _t: f64, y: &[f64; 2]) -> f64 {
+                y[0]
+            }
+        }
+
+        let config = EventConfig {
+            direction: EventDirection::Any,
+            action: EventAction::Continue,
+            ..Default::default()
+        };
+
+        let tol = Tolerances::new(1e-12, 1e-12);
+        let mut solver = Rkf78::new(tol);
+
+        let tf = 4.0 * std::f64::consts::PI;
+        let result = solver
+            .integrate_to_event(&sys, &PositionZero, &config, 0.0, &[1.0, 0.0], tf, 0.1)
+            .unwrap();
+
+        // Should complete to tf
+        match result {
+            IntegrationResult::Completed { t, .. } => {
+                assert!((t - tf).abs() < 1e-10, "Should reach tf, got t={}", t);
+            }
+            IntegrationResult::Event(_) => {
+                panic!("EventAction::Continue should not return Event");
+            }
+        }
+
+        // cos(t) = 0 at t = π/2, 3π/2, 5π/2, 7π/2 → 4 crossings in [0, 4π]
+        assert!(
+            solver.collected_events.len() >= 4,
+            "Expected at least 4 zero-crossings, got {}",
+            solver.collected_events.len()
+        );
+
+        // Verify the first few event times are near the expected zeros
+        let pi = std::f64::consts::PI;
+        let expected_times = [pi / 2.0, 3.0 * pi / 2.0, 5.0 * pi / 2.0, 7.0 * pi / 2.0];
+        for (i, expected_t) in expected_times.iter().enumerate() {
+            if i < solver.collected_events.len() {
+                let actual_t = solver.collected_events[i].t;
+                assert!(
+                    (actual_t - expected_t).abs() < 0.05,
+                    "Event {} at t={:.4}, expected {:.4}",
+                    i,
+                    actual_t,
+                    expected_t
+                );
             }
         }
     }
