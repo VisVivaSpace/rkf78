@@ -287,3 +287,60 @@ All 6 phases complete. Addressed all actionable findings from the aerospace nume
 ### Final State
 
 56 tests (50 unit + 6 GPU integration), all passing. Clippy clean. Fmt clean.
+
+---
+
+# Examples & Documentation Update
+
+## Phase 1: Add CPU Examples
+- [x] `examples/harmonic_oscillator.rs` — Basic `OdeSystem<2>`, integrate, print vs exact
+- [x] `examples/two_body_orbit.rs` — Keplerian 6-state, energy conservation, per-component tolerances
+- [x] `examples/event_detection.rs` — Periapsis detection with `EventFunction<6>`, both Stop and Continue
+- [x] Verify all three run: `cargo run --example <name>`
+
+**DO NOT modify:** `src/solver.rs`, `src/events.rs`, `src/coefficients.rs`, GPU source files.
+
+## Phase 2: Update README.md
+- [x] Add GPU batch propagation bullet to Features list
+- [x] Fix test count: "32 tests" → "56 tests"
+- [x] Add `cargo test --features gpu` and example run commands to Build section
+- [x] Add "GPU Batch Propagation" section (after Event Detection)
+- [x] Add "Examples" section (after Build) listing all 4 examples
+
+## Phase 3: Update `src/lib.rs` Docs
+- [x] Add GPU bullet to features list
+- [x] Uncomment event finding example (lines 69-78)
+- [x] Fix algorithm.md link (replace `your-org/astrodynamics` placeholder)
+- [x] Add GPU section after "Integration with Wisdom-Holman"
+
+## Phase 4: Update `docs/llm-context.md`
+- [x] Add `src/gpu/` row to Module Layout table
+- [x] Add GPU section to API Surface
+- [x] Add GPU f32 precision gotcha
+
+## Phase 5: Verify Everything
+- [x] `cargo run --example harmonic_oscillator`
+- [x] `cargo run --example two_body_orbit`
+- [x] `cargo run --example event_detection`
+- [x] `cargo run --features gpu --example gpu_two_body`
+- [x] `cargo test --features gpu`
+- [x] `cargo clippy --features gpu`
+- [x] `cargo fmt --check`
+
+## Phase 6: Hermite Cubic Interpolation for Event State
+
+Replace linear interpolation with Hermite cubic in `find_event_root()`.
+
+- [x] Change `find_event_root` to compute `f_a = rhs(t_a, y_a)` and `f_b = rhs(t_b, y_b)` (2 RHS evals per event, not per step)
+- [x] Replace linear interp `y = y_a + α(y_b - y_a)` with Hermite cubic using `{y_a, h·f_a, y_b, h·f_b}`
+- [x] Update doc comments on `find_event_root` and `integrate_to_event` (O(h²) → O(h⁴))
+- [x] Update `docs/llm-context.md` gotcha about event interpolation
+- [x] Run event_detection example to verify improvement
+- [x] Run `cargo test --features gpu`, clippy, fmt
+
+**DO NOT modify:** `events.rs`, `coefficients.rs`, GPU files, examples, `integrate_to_event` logic.
+
+## Commit Strategy
+1. "Add CPU examples: harmonic oscillator, two-body orbit, event detection"
+2. "Update README, lib.rs docs, and llm-context.md for GPU feature and examples"
+3. "Upgrade event state interpolation from linear to Hermite cubic"

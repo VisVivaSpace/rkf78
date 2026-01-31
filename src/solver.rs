@@ -420,9 +420,9 @@ impl<const N: usize> Rkf78<N> {
     /// When `g` changes sign (crosses zero), Brent's method is used to
     /// precisely locate the time of the event.
     ///
-    /// **Note:** The event state is found via linear interpolation between
-    /// integration steps, giving O(h²) accuracy in the event state (not the
-    /// event time). For higher accuracy, use tighter tolerances to reduce h.
+    /// **Note:** The event state is found via Hermite cubic interpolation
+    /// between integration steps, giving O(h⁴) accuracy in the event state.
+    /// The event *time* is located to `root_tol` precision by Brent's method.
     ///
     /// # Arguments
     /// * `sys` - The ODE system to integrate
@@ -569,12 +569,12 @@ impl<const N: usize> Rkf78<N> {
 
     /// Find the precise root location using Brent's method.
     ///
-    /// This interpolates the state between two integration steps to
-    /// evaluate the event function at intermediate times.
+    /// The event state is interpolated via Hermite cubic using the RHS
+    /// evaluations at the step endpoints, giving O(h⁴) state accuracy.
     #[allow(clippy::too_many_arguments)]
     fn find_event_root<S, E>(
         &mut self,
-        _sys: &S,
+        sys: &S,
         event: &E,
         t_a: f64,
         y_a: &[f64; N],
@@ -590,41 +590,45 @@ impl<const N: usize> Rkf78<N> {
     {
         let solver = BrentSolver::new(config.root_tol, config.max_iter);
 
-        // We need to be able to evaluate the state at any time t in [t_a, t_b].
-        // The simplest approach is to re-integrate from t_a with small steps.
-        // A more sophisticated approach would use dense output / interpolation.
-        //
-        // For now, we use a simple linear interpolation of the state,
-        // which is adequate when the event occurs close to t_a or t_b.
-        // For higher accuracy, implement dense output using the RK stages.
+        // Compute RHS at both endpoints for Hermite cubic interpolation.
+        // Cost: 2 RHS evaluations per event (not per step).
+        let mut f_a = [0.0; N];
+        let mut f_b = [0.0; N];
+        sys.rhs(t_a, y_a, &mut f_a);
+        sys.rhs(t_b, y_b, &mut f_b);
+        self.stats.fn_evals += 2;
 
         let dt = t_b - t_a;
 
-        // Create a function that evaluates g at time t by interpolating the state
-        let eval_g = |t: f64| {
-            // Linear interpolation factor
+        // Hermite cubic interpolation: given y_a, f_a, y_b, f_b,
+        // compute y(t) for t in [t_a, t_b] with O(h⁴) accuracy.
+        let hermite_interp = |t: f64| -> [f64; N] {
             let alpha = (t - t_a) / dt;
+            let a2 = alpha * alpha;
+            let a3 = a2 * alpha;
+            // Hermite basis functions
+            let h00 = 1.0 - 3.0 * a2 + 2.0 * a3; // y_a weight
+            let h10 = alpha - 2.0 * a2 + a3; // f_a weight (scaled by dt)
+            let h01 = 3.0 * a2 - 2.0 * a3; // y_b weight
+            let h11 = -a2 + a3; // f_b weight (scaled by dt)
 
-            // Interpolate state (simple linear interpolation)
-            let mut y_interp = [0.0; N];
+            let mut y = [0.0; N];
             for i in 0..N {
-                y_interp[i] = y_a[i] + alpha * (y_b[i] - y_a[i]);
+                y[i] = h00 * y_a[i] + h10 * dt * f_a[i] + h01 * y_b[i] + h11 * dt * f_b[i];
             }
+            y
+        };
 
+        // Create a function that evaluates g at time t using Hermite interpolation
+        let eval_g = |t: f64| {
+            let y_interp = hermite_interp(t);
             event.eval(t, &y_interp)
         };
 
         // Find the root
         match solver.find_root(eval_g, t_a, t_b, Some(g_a), Some(g_b)) {
             Ok((t_event, g_value, iterations)) => {
-                // Compute the state at the event time
-                // For higher precision, re-integrate to t_event
-                let alpha = (t_event - t_a) / dt;
-                let mut y_event = [0.0; N];
-                for i in 0..N {
-                    y_event[i] = y_a[i] + alpha * (y_b[i] - y_a[i]);
-                }
-
+                let y_event = hermite_interp(t_event);
                 Ok(EventResult {
                     t: t_event,
                     y: y_event,
@@ -644,12 +648,7 @@ impl<const N: usize> Rkf78<N> {
                 iterations,
             }) => {
                 // Return best estimate even if not fully converged
-                let alpha = (current_best - t_a) / dt;
-                let mut y_event = [0.0; N];
-                for i in 0..N {
-                    y_event[i] = y_a[i] + alpha * (y_b[i] - y_a[i]);
-                }
-
+                let y_event = hermite_interp(current_best);
                 Ok(EventResult {
                     t: current_best,
                     y: y_event,
