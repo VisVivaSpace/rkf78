@@ -427,3 +427,26 @@ Fixed two AI code review findings: commented out placeholder repository URL in C
 ### Verification
 
 All 56 tests passing (50 CPU + 6 GPU integration), GPU example runs, clippy clean, fmt clean.
+
+---
+
+# Rust Naming Convention Review
+
+## Tasks
+
+- [x] Review all source files for RFC 430 naming convention compliance
+- [x] Fix stale `propagate_batch` signature in README.md (missing `?` operator)
+- [x] Run verification: `cargo test --features gpu`, `cargo clippy --features gpu`, `cargo fmt --check`
+
+## Review
+
+### Summary
+The codebase naming conventions are fully compliant with RFC 430. The only issue found was a stale code example in `README.md:108` where `propagate_batch` was missing the `?` operator after the API was changed to return `Result`.
+
+### Changes Made
+- **`README.md:108`** — Added `?` to `propagator.propagate_batch(&states, &params)?;`
+
+### Verification
+- All tests pass (CPU + GPU)
+- Clippy clean
+- Formatting clean

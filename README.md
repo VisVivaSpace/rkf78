@@ -105,7 +105,7 @@ With the `gpu` feature enabled, RKF78 can propagate thousands of trajectories in
 use rkf78::gpu::{GpuBatchPropagator, GpuIntegrationParams, GpuState};
 
 let propagator = GpuBatchPropagator::new(force_model_wgsl)?;
-let (final_states, statuses) = propagator.propagate_batch(&states, &params);
+let (final_states, statuses) = propagator.propagate_batch(&states, &params)?;
 ```
 
 See [`examples/gpu_two_body.rs`](examples/gpu_two_body.rs) for a complete example.
