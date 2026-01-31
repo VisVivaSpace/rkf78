@@ -52,6 +52,7 @@ pub struct Stats {
 ///
 /// h_new = safety * h * error^(-1/p)
 /// where p = 8 for RKF78
+#[derive(Clone)]
 pub struct StepController {
     /// Safety factor (0.8-0.9 typical)
     pub safety: f64,
@@ -138,6 +139,7 @@ impl<const N: usize> Tolerances<N> {
 ///
 /// let (tf, yf) = solver.integrate(&sys, 0.0, &y0, 10.0, 0.1).unwrap();
 /// ```
+#[derive(Clone)]
 pub struct Rkf78<const N: usize> {
     /// Tolerance specification
     tol: Tolerances<N>,
@@ -417,6 +419,10 @@ impl<const N: usize> Rkf78<N> {
     /// This method monitors an event function `g(t, y)` during integration.
     /// When `g` changes sign (crosses zero), Brent's method is used to
     /// precisely locate the time of the event.
+    ///
+    /// **Note:** The event state is found via linear interpolation between
+    /// integration steps, giving O(h²) accuracy in the event state (not the
+    /// event time). For higher accuracy, use tighter tolerances to reduce h.
     ///
     /// # Arguments
     /// * `sys` - The ODE system to integrate

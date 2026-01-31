@@ -247,6 +247,6 @@ All 6 GPU integration tests pass. Results:
 - [x] `test_high_eccentricity_orbit_energy` — e=0.99, one period
 
 ## Phase 6: Rust Polish
-- [ ] `#[derive(Clone)]` on `StepController`
-- [ ] `#[derive(Clone)]` on `Rkf78<N>`
-- [ ] Doc comment on `integrate_to_event` noting linear interpolation O(h²) accuracy
+- [x] `#[derive(Clone)]` on `StepController`
+- [x] `#[derive(Clone)]` on `Rkf78<N>`
+- [x] Doc comment on `integrate_to_event` noting linear interpolation O(h²) accuracy
