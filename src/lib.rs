@@ -89,6 +89,13 @@
 //! For energy conservation tests with RKF78 at `tol=1e-12`:
 //! - Energy drift should be `< 1e-10` over one orbital period
 //!
+//! ## Algorithm Details
+//!
+//! For a detailed explanation of the RKF7(8) mathematics — Butcher tableau,
+//! error estimation, adaptive step-size control, and Brent's method for event
+//! detection — see [`docs/algorithm.md`](https://github.com/your-org/astrodynamics/blob/master/docs/algorithm.md)
+//! in the repository.
+//!
 //! ## Integration with Wisdom-Holman
 //!
 //! This integrator is designed to work as the perturbation integrator
@@ -98,11 +105,11 @@
 //!
 //! ## References
 //!
-//! 1. Fehlberg, E. (1968). "Classical Fifth-, Sixth-, Seventh-, and 
+//! 1. Fehlberg, E. (1968). "Classical Fifth-, Sixth-, Seventh-, and
 //!    Eighth-Order Runge-Kutta Formulas with Stepsize Control".
 //!    NASA TR R-287.
 //!
-//! 2. Hairer, E., Nørsett, S.P., & Wanner, G. (1993). "Solving 
+//! 2. Hairer, E., Nørsett, S.P., & Wanner, G. (1993). "Solving
 //!    Ordinary Differential Equations I: Nonstiff Problems".
 //!    Springer.
 //!
