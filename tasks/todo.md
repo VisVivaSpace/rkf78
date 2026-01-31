@@ -226,8 +226,8 @@ All 6 GPU integration tests pass. Results:
 - [x] Run `cargo test --features gpu`, `cargo clippy --features gpu`
 
 ## Phase 2: Brent's Method Defensive Guard
-- [ ] Add `fa != fb` guard in Brent's IQI condition, add bisection fallback for degenerate case
-- [ ] Add `test_brent_equal_function_values` test
+- [x] Add `fa != fb` guard in Brent's IQI condition, add bisection fallback for degenerate case
+- [x] Add `test_brent_equal_function_values` test
 
 ## Phase 3: GPU Constructors Return Result
 - [ ] Add `GpuError` enum with `Display` + `Error`

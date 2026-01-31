@@ -199,14 +199,17 @@ impl BrentSolver {
             }
 
             // Try inverse quadratic interpolation or secant
-            let s = if fa != fc && fb != fc {
+            let s = if fa != fc && fb != fc && fa != fb {
                 // Inverse quadratic interpolation
                 a * fb * fc / ((fa - fb) * (fa - fc))
                     + b * fa * fc / ((fb - fa) * (fb - fc))
                     + c * fa * fb / ((fc - fa) * (fc - fb))
-            } else {
+            } else if fb != fa {
                 // Secant method
                 b - fb * (b - a) / (fb - fa)
+            } else {
+                // Degenerate: fa == fb, fall back to bisection
+                (a + b) / 2.0
             };
 
             // Conditions for rejecting s and falling back to bisection
@@ -444,6 +447,21 @@ mod tests {
         assert!(
             root.abs() <= 1e-15,
             "Root {} should be within bracket [-1e-15, 1e-15]",
+            root
+        );
+    }
+
+    #[test]
+    fn test_brent_equal_function_values() {
+        // f(x) = (x - 0.5)^3: f(0) = -0.125, f(1) = 0.125
+        // Symmetric about the root — early iterations may produce fa == fb.
+        // This exercises the degenerate bisection fallback.
+        let solver = BrentSolver::default();
+        let result = solver.find_root(|x| (x - 0.5_f64).powi(3), 0.0, 1.0, None, None);
+        let (root, _, _) = result.unwrap();
+        assert!(
+            (root - 0.5).abs() < 1e-4,
+            "Root {} should be near 0.5",
             root
         );
     }
