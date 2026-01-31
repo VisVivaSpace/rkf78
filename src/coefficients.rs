@@ -306,7 +306,7 @@ mod tests {
     use super::*;
 
     // Summation of ~13 f64 terms accumulates ~O(n*eps) roundoff
-    const TOL: f64 = 1e-14;
+    const TOL: f64 = 5e-15;
 
     #[test]
     fn test_row_sum_condition() {
@@ -349,6 +349,22 @@ mod tests {
             "Error weights sum to {}, expected 0.0",
             err_sum
         );
+    }
+
+    #[test]
+    fn test_b_err_equals_b_minus_b_hat() {
+        for i in 0..STAGES {
+            let diff = B[i] - B_HAT[i];
+            assert!(
+                (B_ERR[i] - diff).abs() < TOL,
+                "B_ERR[{}] = {}, but B[{}] - B_HAT[{}] = {}",
+                i,
+                B_ERR[i],
+                i,
+                i,
+                diff
+            );
+        }
     }
 
     #[test]

@@ -404,6 +404,51 @@ mod tests {
     }
 
     #[test]
+    fn test_brent_root_at_endpoint() {
+        // f(x) = x + 1, root at x = -1 (left bracket endpoint)
+        let solver = BrentSolver::default();
+        let result = solver.find_root(|x| x + 1.0, -1.0, 1.0, None, None);
+        let (root, f_root, _) = result.unwrap();
+        assert!(
+            (root - (-1.0)).abs() < 1e-12,
+            "Root {} should be -1.0",
+            root
+        );
+        assert!(f_root.abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_brent_triple_root() {
+        // f(x) = (x-1)^3, triple root at x = 1, bracket [0, 2]
+        // Triple roots are hard for Brent because convergence degrades.
+        // We accept finding the root within a looser tolerance.
+        let solver = BrentSolver::new(1e-12, 100);
+        let result = solver.find_root(|x| (x - 1.0).powi(3), 0.0, 2.0, None, None);
+        let (root, _, _) = result.unwrap();
+        assert!(
+            (root - 1.0).abs() < 1e-4,
+            "Triple root {} should be near 1.0",
+            root
+        );
+    }
+
+    #[test]
+    fn test_brent_near_zero_bracket() {
+        // f(x) = x, root at 0, bracket [-1e-15, 1e-15]
+        // The bracket is smaller than the default tol (1e-12), so Brent
+        // converges immediately and returns the best endpoint.
+        let solver = BrentSolver::default();
+        let result = solver.find_root(|x| x, -1e-15, 1e-15, None, None);
+        let (root, _, _) = result.unwrap();
+        // Root must be within the original bracket
+        assert!(
+            root.abs() <= 1e-15,
+            "Root {} should be within bracket [-1e-15, 1e-15]",
+            root
+        );
+    }
+
+    #[test]
     fn test_brent_cubic() {
         let solver = BrentSolver::default();
 

@@ -153,7 +153,8 @@ pub struct Rkf78<const N: usize> {
     k: [[f64; N]; STAGES],
     /// Integration statistics
     pub stats: Stats,
-    /// Events collected during `integrate_to_event` with `EventAction::Continue`
+    /// Events collected during `integrate_to_event` with `EventAction::Continue`.
+    /// Cleared at the start of each `integrate_to_event` call.
     pub collected_events: Vec<EventResult<N>>,
 }
 
@@ -878,37 +879,75 @@ mod tests {
 
     #[test]
     fn test_order_of_convergence() {
-        // Test that halving step size reduces error by ~2^8 = 256
-        // Use a problem with known solution
+        // Single-step h-refinement study on y' = cos(t), y(0) = 0, exact y = sin(t).
+        // For an 8th-order method, error ~ O(h^9) per step, so
+        // err(h) / err(h/2) should approach 2^9 = 512.
+        // We use a broad acceptance range [100, 800] to account for
+        // higher-order error terms at larger step sizes.
 
-        struct SinusoidalODE;
-        impl OdeSystem<1> for SinusoidalODE {
+        struct CosODE;
+        impl OdeSystem<1> for CosODE {
             fn rhs(&self, t: f64, _y: &[f64; 1], dydt: &mut [f64; 1]) {
-                dydt[0] = t.cos(); // y' = cos(t), y = sin(t) + C
+                dydt[0] = t.cos();
             }
         }
 
-        let sys = SinusoidalODE;
-        let y0 = [0.0]; // y(0) = 0, so y = sin(t)
-        let tf = 1.0;
+        let sys = CosODE;
+        let y0 = [0.0];
 
-        // Very loose tolerance to force fixed-ish step behavior
-        let tol = Tolerances::new(1e-4, 1e-4);
+        // Use very loose tolerances so the solver always accepts the step
+        let tol = Tolerances::new(1.0, 1.0);
 
-        // This is more of a sanity check than a rigorous order test
-        // A full order test would need to control step size more carefully
-        let mut solver = Rkf78::new(tol);
-        let (_, y_final) = solver.integrate(&sys, 0.0, &y0, tf, 0.1).unwrap();
+        let step_sizes = [1.6, 0.8, 0.4, 0.2];
+        let mut errors = Vec::new();
 
-        let exact = tf.sin();
-        let error = (y_final[0] - exact).abs();
+        for &h in &step_sizes {
+            let mut solver = Rkf78::new(tol.clone());
+            let result = solver.step(&sys, 0.0, &y0, h);
+            assert!(result.accepted, "Step with h={} should be accepted", h);
+            let exact = h.sin();
+            let err = (result.y[0] - exact).abs();
+            errors.push(err);
+            println!(
+                "h = {:.4}, y = {:.15e}, exact = {:.15e}, err = {:.3e}",
+                h, result.y[0], exact, err
+            );
+        }
 
-        println!("Order convergence test:");
-        println!("  y({}) = {:.15}, exact = {:.15}", tf, y_final[0], exact);
-        println!("  Error: {:.3e}", error);
-
-        // With these tolerances, error should be quite small
-        assert!(error < 1e-4);
+        // Check error ratios approach 2^9 = 512 (local truncation error is O(h^{p+1}))
+        // Skip pairs where the smaller error is at machine epsilon (ratio meaningless)
+        println!("\nError ratios (expect ~512 for 8th-order local truncation):");
+        let mut checked = 0;
+        for i in 0..errors.len() - 1 {
+            if errors[i + 1] < 1e-15 {
+                println!(
+                    "  err({:.3}) / err({:.3}) — skipped (denominator at machine eps)",
+                    step_sizes[i],
+                    step_sizes[i + 1]
+                );
+                continue;
+            }
+            let ratio = errors[i] / errors[i + 1];
+            println!(
+                "  err({:.3}) / err({:.3}) = {:.1}",
+                step_sizes[i],
+                step_sizes[i + 1],
+                ratio
+            );
+            assert!(
+                ratio > 100.0 && ratio < 800.0,
+                "Error ratio {:.1} outside [100, 800] for h={}/{}",
+                ratio,
+                step_sizes[i],
+                step_sizes[i + 1]
+            );
+            checked += 1;
+        }
+        assert!(
+            checked >= 2,
+            "Need at least 2 valid error ratios, got {}",
+            checked
+        );
     }
 
     // ==================== Event Finding Tests ====================
@@ -1530,6 +1569,179 @@ mod tests {
             (ev.t - 1.0).abs() < 0.01,
             "Event time {} should be near 1.0",
             ev.t
+        );
+    }
+
+    // ==================== Long-Duration & Round-Trip Tests ====================
+
+    #[test]
+    fn test_100_orbit_energy_conservation() {
+        let mu = 398600.4418;
+        let sys = TwoBody { mu };
+
+        let r0 = 6878.0;
+        let v0 = (mu / r0).sqrt();
+        let y0 = [r0, 0.0, 0.0, 0.0, v0, 0.0];
+
+        let period = 2.0 * std::f64::consts::PI * (r0.powi(3) / mu).sqrt();
+        let tf = 100.0 * period;
+
+        let compute_energy = |y: &[f64; 6]| {
+            let r = (y[0] * y[0] + y[1] * y[1] + y[2] * y[2]).sqrt();
+            let v2 = y[3] * y[3] + y[4] * y[4] + y[5] * y[5];
+            0.5 * v2 - mu / r
+        };
+
+        let e0 = compute_energy(&y0);
+
+        let tol = Tolerances::new(1e-12, 1e-12);
+        let mut solver = Rkf78::new(tol);
+
+        let (_, y_final) = solver.integrate(&sys, 0.0, &y0, tf, 60.0).unwrap();
+        let e_final = compute_energy(&y_final);
+        let rel_energy_error = (e_final - e0).abs() / e0.abs();
+
+        println!("100-orbit energy drift: {:.3e}", rel_energy_error);
+        assert!(
+            rel_energy_error < 1e-7,
+            "100-orbit energy drift {} exceeds 1e-7",
+            rel_energy_error
+        );
+    }
+
+    #[test]
+    fn test_forward_backward_round_trip() {
+        let sys = HarmonicOscillator { omega: 1.0 };
+        let y0 = [1.0, 0.0];
+        let period = 2.0 * std::f64::consts::PI;
+
+        let tol = Tolerances::new(1e-12, 1e-12);
+        let mut solver = Rkf78::new(tol.clone());
+
+        // Forward one period
+        let (t_mid, y_mid) = solver.integrate(&sys, 0.0, &y0, period, 0.1).unwrap();
+
+        // Backward one period
+        let mut solver2 = Rkf78::new(tol);
+        let (t_final, y_final) = solver2.integrate(&sys, t_mid, &y_mid, 0.0, -0.1).unwrap();
+
+        assert!(
+            t_final.abs() < 1e-10,
+            "Round-trip t = {}, expected 0",
+            t_final
+        );
+        assert!(
+            (y_final[0] - y0[0]).abs() < 1e-9,
+            "Round-trip y[0] = {}, expected {}",
+            y_final[0],
+            y0[0]
+        );
+        assert!(
+            (y_final[1] - y0[1]).abs() < 1e-9,
+            "Round-trip y[1] = {}, expected {}",
+            y_final[1],
+            y0[1]
+        );
+    }
+
+    #[test]
+    fn test_per_component_tolerance() {
+        // Verify that per-component tolerances work with different-scale components.
+        // Harmonic oscillator: y[0] = cos(t), y[1] = -sin(t).
+        // Use tight atol for position (large ~1), loose atol for velocity (also ~1),
+        // and compare step counts: tighter uniform tolerance needs more steps.
+        let sys = HarmonicOscillator { omega: 1.0 };
+        let y0 = [1.0, 0.0];
+        let tf = 10.0 * std::f64::consts::PI;
+
+        // Run with loose uniform tolerance
+        let tol_loose = Tolerances::new(1e-6, 1e-6);
+        let mut solver_loose = Rkf78::new(tol_loose);
+        let (_, y_loose) = solver_loose.integrate(&sys, 0.0, &y0, tf, 0.1).unwrap();
+        let steps_loose = solver_loose.stats.accepted_steps;
+
+        // Run with tight uniform tolerance
+        let tol_tight = Tolerances::new(1e-13, 1e-13);
+        let mut solver_tight = Rkf78::new(tol_tight);
+        let (_, y_tight) = solver_tight.integrate(&sys, 0.0, &y0, tf, 0.1).unwrap();
+        let steps_tight = solver_tight.stats.accepted_steps;
+
+        // Run with per-component: tight on y[0], loose on y[1]
+        let tol_mixed = Tolerances::with_components([1e-13, 1e-6], [1e-13, 1e-6]);
+        let mut solver_mixed = Rkf78::new(tol_mixed);
+        let (_, y_mixed) = solver_mixed.integrate(&sys, 0.0, &y0, tf, 0.1).unwrap();
+        let steps_mixed = solver_mixed.stats.accepted_steps;
+
+        println!(
+            "Steps: loose={}, mixed={}, tight={}",
+            steps_loose, steps_mixed, steps_tight
+        );
+
+        // Mixed tolerance should need more steps than loose (tight y[0] drives step size)
+        assert!(
+            steps_mixed > steps_loose,
+            "Per-component tight should need more steps ({}) than loose ({})",
+            steps_mixed,
+            steps_loose
+        );
+
+        // y[0] accuracy with mixed should be close to tight (since y[0] drives step size)
+        let exact_y0 = tf.cos();
+        let err_tight = (y_tight[0] - exact_y0).abs();
+        let err_mixed = (y_mixed[0] - exact_y0).abs();
+        let err_loose = (y_loose[0] - exact_y0).abs();
+
+        println!(
+            "y[0] errors: loose={:.3e}, mixed={:.3e}, tight={:.3e}",
+            err_loose, err_mixed, err_tight
+        );
+
+        // Mixed should be much better than loose for y[0]
+        assert!(
+            err_mixed < err_loose || err_loose < 1e-10,
+            "Per-component should improve accuracy of tight component"
+        );
+    }
+
+    // ==================== Step Controller Boundary Tests ====================
+
+    #[test]
+    fn test_step_controller_zero_error() {
+        let ctrl = StepController::default();
+        let factor = ctrl.compute_factor(0.0);
+        assert_eq!(factor, ctrl.max_factor, "error=0 should give max_factor");
+    }
+
+    #[test]
+    fn test_step_controller_unit_error() {
+        let ctrl = StepController::default();
+        let factor = ctrl.compute_factor(1.0);
+        // safety * 1.0^(-1/8) = 0.9 * 1.0 = 0.9
+        assert!(
+            (factor - ctrl.safety).abs() < 1e-15,
+            "error=1.0 should give safety={}, got {}",
+            ctrl.safety,
+            factor
+        );
+    }
+
+    #[test]
+    fn test_step_controller_tiny_error_clamped() {
+        let ctrl = StepController::default();
+        let factor = ctrl.compute_factor(1e-20);
+        assert_eq!(
+            factor, ctrl.max_factor,
+            "very small error should clamp to max_factor"
+        );
+    }
+
+    #[test]
+    fn test_step_controller_huge_error_clamped() {
+        let ctrl = StepController::default();
+        let factor = ctrl.compute_factor(1e+20);
+        assert_eq!(
+            factor, ctrl.min_factor,
+            "very large error should clamp to min_factor"
         );
     }
 
