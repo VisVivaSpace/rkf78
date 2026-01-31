@@ -121,6 +121,8 @@
 
 pub mod coefficients;
 pub mod events;
+#[cfg(feature = "gpu")]
+pub mod gpu;
 pub mod solver;
 
 pub use events::{

@@ -11,6 +11,10 @@ categories = ["science", "simulation", "mathematics"]
 [dependencies]
 # Intentionally minimal - no external deps for core functionality
 
+wgpu = { version = "24", optional = true }
+bytemuck = { version = "1", features = ["derive"], optional = true }
+pollster = { version = "0.4", optional = true }
+
 [dev-dependencies]
 approx = "0.5"
 criterion = "0.5"
@@ -21,8 +25,7 @@ harness = false
 
 [features]
 default = []
-# Future: nalgebra support for vector types
-# nalgebra = ["dep:nalgebra"]
+gpu = ["dep:wgpu", "dep:bytemuck", "dep:pollster"]
 
 [profile.release]
 lto = true
