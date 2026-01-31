@@ -4,15 +4,19 @@
 // Each GPU thread independently propagates one trajectory.
 //
 // Force model: Keplerian two-body (mu/r^2).
+//
+// NOTE: Buffer structs use scalar fields (not vec3) to match Rust repr(C)
+// layout. WGSL vec3<f32> has 16-byte alignment which would add padding.
 
-// ─── Struct definitions (must match Rust repr(C) types) ─────────────────
+// ─── Struct definitions (must match Rust repr(C) types exactly) ─────────
 
 struct State {
-    pos: vec3<f32>,
-    vel: vec3<f32>,
+    px: f32, py: f32, pz: f32,  // position [km]
+    vx: f32, vy: f32, vz: f32,  // velocity [km/s]
     epoch: f32,
     _pad: f32,
 }
+// 8 × f32 = 32 bytes, alignment 4 — matches Rust GpuState
 
 struct TrajectoryStatus {
     status: u32,     // 0 = active, 1 = completed, 2 = failed
@@ -20,6 +24,7 @@ struct TrajectoryStatus {
     rejected: u32,
     h_final: f32,
 }
+// 4 × 4 = 16 bytes — matches Rust TrajectoryStatus
 
 struct IntegrationParams {
     mu: f32,
@@ -31,8 +36,11 @@ struct IntegrationParams {
     atol_pos: f32,
     atol_vel: f32,
     max_steps_per_dispatch: u32,
-    _pad: vec3<u32>,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 }
+// 12 × 4 = 48 bytes — matches Rust GpuIntegrationParams
 
 // ─── Buffer bindings ────────────────────────────────────────────────────
 
@@ -76,6 +84,11 @@ const B_ERR: array<f32, 13> = array<f32, 13>(
     -41.0 / 840.0,    // b_err[11]
     -41.0 / 840.0,    // b_err[12]
 );
+
+// ─── Helpers: convert between scalar struct and vec3 ────────────────────
+
+fn load_pos(s: State) -> vec3<f32> { return vec3<f32>(s.px, s.py, s.pz); }
+fn load_vel(s: State) -> vec3<f32> { return vec3<f32>(s.vx, s.vy, s.vz); }
 
 // ─── Force model ────────────────────────────────────────────────────────
 
@@ -268,8 +281,8 @@ fn propagate(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
-    var pos   = current_states[idx].pos;
-    var vel   = current_states[idx].vel;
+    var pos   = load_pos(current_states[idx]);
+    var vel   = load_vel(current_states[idx]);
     var epoch = current_states[idx].epoch;
     var h     = status[idx].h_final;
 
@@ -322,7 +335,6 @@ fn propagate(@builtin(global_invocation_id) global_id: vec3<u32>) {
         if result.error == 0.0 {
             factor = 5.0;  // max_factor
         } else {
-            // pow(error, -1/8) = exp(-ln(error)/8)
             factor = 0.9 * pow(result.error, -0.125);
             factor = clamp(factor, 0.2, 5.0);
         }
@@ -338,8 +350,12 @@ fn propagate(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     // Write back state
-    current_states[idx].pos   = pos;
-    current_states[idx].vel   = vel;
+    current_states[idx].px    = pos.x;
+    current_states[idx].py    = pos.y;
+    current_states[idx].pz    = pos.z;
+    current_states[idx].vx    = vel.x;
+    current_states[idx].vy    = vel.y;
+    current_states[idx].vz    = vel.z;
     current_states[idx].epoch = epoch;
     status[idx].h_final       = h;
 }
