@@ -15,9 +15,9 @@ categories = ["science", "simulation", "mathematics"]
 approx = "0.5"
 criterion = "0.5"
 
-# [[bench]]
-# name = "integration"
-# harness = false
+[[bench]]
+name = "integration"
+harness = false
 
 [features]
 default = []
