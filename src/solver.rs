@@ -1603,8 +1603,8 @@ mod tests {
 
         println!("100-orbit energy drift: {:.3e}", rel_energy_error);
         assert!(
-            rel_energy_error < 1e-7,
-            "100-orbit energy drift {} exceeds 1e-7",
+            rel_energy_error < 1e-8,
+            "100-orbit energy drift {} exceeds 1e-8",
             rel_energy_error
         );
     }
@@ -1631,13 +1631,13 @@ mod tests {
             t_final
         );
         assert!(
-            (y_final[0] - y0[0]).abs() < 1e-9,
+            (y_final[0] - y0[0]).abs() < 1e-10,
             "Round-trip y[0] = {}, expected {}",
             y_final[0],
             y0[0]
         );
         assert!(
-            (y_final[1] - y0[1]).abs() < 1e-9,
+            (y_final[1] - y0[1]).abs() < 1e-10,
             "Round-trip y[1] = {}, expected {}",
             y_final[1],
             y0[1]
@@ -1742,6 +1742,89 @@ mod tests {
         assert_eq!(
             factor, ctrl.min_factor,
             "very large error should clamp to min_factor"
+        );
+    }
+
+    #[test]
+    fn test_tolerance_sensitivity() {
+        // Harmonic oscillator over 10 periods: tighter tolerances should give smaller errors.
+        let sys = HarmonicOscillator { omega: 1.0 };
+        let y0 = [1.0, 0.0];
+        let tf = 10.0 * 2.0 * std::f64::consts::PI;
+
+        let exact_y0 = tf.cos();
+
+        let run = |atol: f64, rtol: f64| -> f64 {
+            let tol = Tolerances::new(atol, rtol);
+            let mut solver = Rkf78::new(tol);
+            let (_, y_final) = solver.integrate(&sys, 0.0, &y0, tf, 0.1).unwrap();
+            (y_final[0] - exact_y0).abs()
+        };
+
+        let err_loose = run(1e-8, 1e-8);
+        let err_medium = run(1e-10, 1e-10);
+        let err_tight = run(1e-12, 1e-12);
+
+        println!(
+            "Tolerance sensitivity: loose={:.3e}, medium={:.3e}, tight={:.3e}",
+            err_loose, err_medium, err_tight
+        );
+
+        assert!(
+            err_loose > err_medium,
+            "Loose error {:.3e} should exceed medium {:.3e}",
+            err_loose,
+            err_medium
+        );
+        assert!(
+            err_medium > err_tight,
+            "Medium error {:.3e} should exceed tight {:.3e}",
+            err_medium,
+            err_tight
+        );
+    }
+
+    #[test]
+    fn test_high_eccentricity_orbit_energy() {
+        // High-eccentricity orbit (e=0.99): energy conservation over one full period.
+        let mu = 398600.4418;
+        let sys = TwoBody { mu };
+
+        let rp = 6678.0; // 300 km periapsis
+        let e = 0.99;
+        let a = rp / (1.0 - e);
+
+        let v_peri = (mu * (2.0 / rp - 1.0 / a)).sqrt();
+        let y0 = [rp, 0.0, 0.0, 0.0, v_peri, 0.0];
+
+        let period = 2.0 * std::f64::consts::PI * (a.powi(3) / mu).sqrt();
+
+        let compute_energy = |y: &[f64; 6]| {
+            let r = (y[0] * y[0] + y[1] * y[1] + y[2] * y[2]).sqrt();
+            let v2 = y[3] * y[3] + y[4] * y[4] + y[5] * y[5];
+            0.5 * v2 - mu / r
+        };
+
+        let e0 = compute_energy(&y0);
+
+        let tol = Tolerances::new(1e-12, 1e-12);
+        let mut solver = Rkf78::new(tol);
+
+        let (_, y_final) = solver.integrate(&sys, 0.0, &y0, period, 1.0).unwrap();
+
+        let e_final = compute_energy(&y_final);
+        let rel_energy_error = (e_final - e0).abs() / e0.abs();
+
+        println!(
+            "High-eccentricity (e=0.99) energy drift: {:.3e} (period = {:.0} s)",
+            rel_energy_error, period
+        );
+
+        // High-e orbits are challenging; 1e-6 is a reasonable threshold
+        assert!(
+            rel_energy_error < 1e-6,
+            "High-e orbit energy drift {} exceeds 1e-6",
+            rel_energy_error
         );
     }
 

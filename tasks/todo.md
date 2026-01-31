@@ -236,15 +236,15 @@ All 6 GPU integration tests pass. Results:
 - [x] Update all GPU test calls to `.unwrap()`
 
 ## Phase 4: Tighten Test Tolerances
-- [ ] `test_100_orbit_energy_conservation`: 1e-7 → 1e-8
-- [ ] `test_forward_backward_round_trip`: 1e-9 → 1e-10
-- [ ] `test_brent_simple_root`: 1e-12 → 1e-13
-- [ ] `test_brent_trigonometric`: 1e-12 → 1e-13
-- [ ] `test_brent_cubic`: 1e-6 → 1e-10
+- [x] `test_100_orbit_energy_conservation`: 1e-7 → 1e-8
+- [x] `test_forward_backward_round_trip`: 1e-9 → 1e-10
+- [x] `test_brent_simple_root`: 1e-12 → 1e-13
+- [x] `test_brent_trigonometric`: 1e-12 → 1e-13
+- [x] `test_brent_cubic`: 1e-6 → 1e-10
 
 ## Phase 5: New Tests
-- [ ] `test_tolerance_sensitivity` — harmonic oscillator, 3 tolerance levels
-- [ ] `test_high_eccentricity_orbit_energy` — e=0.99, one period
+- [x] `test_tolerance_sensitivity` — harmonic oscillator, 3 tolerance levels
+- [x] `test_high_eccentricity_orbit_energy` — e=0.99, one period
 
 ## Phase 6: Rust Polish
 - [ ] `#[derive(Clone)]` on `StepController`

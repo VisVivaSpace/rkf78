@@ -347,12 +347,12 @@ mod tests {
         let expected = 2.0_f64.sqrt();
 
         assert!(
-            (root - expected).abs() < 1e-12,
+            (root - expected).abs() < 1e-13,
             "Root {} should be close to sqrt(2) = {}",
             root,
             expected
         );
-        assert!(f_root.abs() < 1e-12, "f(root) = {} should be ~0", f_root);
+        assert!(f_root.abs() < 1e-13, "f(root) = {} should be ~0", f_root);
         println!(
             "Found root {} in {} iterations (exact: {})",
             root, iters, expected
@@ -370,12 +370,12 @@ mod tests {
         let expected = std::f64::consts::PI;
 
         assert!(
-            (root - expected).abs() < 1e-12,
+            (root - expected).abs() < 1e-13,
             "Root {} should be close to π = {}",
             root,
             expected
         );
-        assert!(f_root.abs() < 1e-12);
+        assert!(f_root.abs() < 1e-13);
         println!("Found root {} in {} iterations (exact: π)", root, iters);
     }
 
@@ -478,7 +478,7 @@ mod tests {
         // Verify it's actually a root
         assert!(f_root.abs() < 1e-12);
         // Verify the root value
-        assert!((root - 1.5213797).abs() < 1e-6);
+        assert!((root - 1.5213797068045676).abs() < 1e-10);
         println!("Cubic root found: {} in {} iterations", root, iters);
     }
 }
