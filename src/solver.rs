@@ -185,7 +185,7 @@ impl<const N: usize> Rkf78<N> {
         y: &[f64; N],
         h: f64,
     ) -> StepResult<N> {
-        let h = h.clamp(self.h_min, self.h_max);
+        let h = h.signum() * h.abs().clamp(self.h_min, self.h_max);
         
         // Compute all 13 stages
         self.compute_stages(sys, t, y, h);
@@ -199,9 +199,9 @@ impl<const N: usize> Rkf78<N> {
         // Determine acceptance
         let accepted = error <= 1.0;
         
-        // Compute next step size
+        // Compute next step size (always positive magnitude)
         let factor = self.controller.compute_factor(error);
-        let h_next = (h * factor).clamp(self.h_min, self.h_max);
+        let h_next = (h.abs() * factor).clamp(self.h_min, self.h_max);
         
         // Update statistics
         self.stats.fn_evals += STAGES as u64;
@@ -275,15 +275,16 @@ impl<const N: usize> Rkf78<N> {
                 return Err(IntegrationError::MaxStepsExceeded);
             }
             
-            // Check for step size too small
-            if h.abs() < self.h_min && (tf - t) * direction > self.h_min {
-                return Err(IntegrationError::StepSizeTooSmall { 
-                    t, 
-                    h: h.abs() 
+            // Check for step size too small: if the step was rejected and
+            // the next step size is already at h_min, we can't make progress
+            if !result.accepted && result.h_next <= self.h_min && (tf - t) * direction > self.h_min {
+                return Err(IntegrationError::StepSizeTooSmall {
+                    t,
+                    h: result.h_next,
                 });
             }
         }
-        
+
         Ok((t, y))
     }
     
@@ -528,8 +529,8 @@ impl<const N: usize> Rkf78<N> {
                 return Err(IntegrationError::MaxStepsExceeded);
             }
 
-            if h.abs() < self.h_min && (tf - t) * direction > self.h_min {
-                return Err(IntegrationError::StepSizeTooSmall { t, h: h.abs() });
+            if !result.accepted && result.h_next <= self.h_min && (tf - t) * direction > self.h_min {
+                return Err(IntegrationError::StepSizeTooSmall { t, h: result.h_next });
             }
         }
 
@@ -1162,5 +1163,268 @@ mod tests {
         let (t, y) = solver.integrate(&Dummy, 5.0, &[42.0], 5.0, 0.1).unwrap();
         assert_eq!(t, 5.0);
         assert_eq!(y[0], 42.0);
+    }
+
+    // ==================== Phase 2: Expanded Test Coverage ====================
+
+    #[test]
+    fn test_backward_integration() {
+        // Harmonic oscillator integrated backward from 2π to 0
+        let omega = 1.0;
+        let sys = HarmonicOscillator { omega };
+        let tf = 2.0 * std::f64::consts::PI;
+
+        // Start at the known final state (should be [1, 0] after one period)
+        let y0 = [1.0, 0.0];
+
+        let tol = Tolerances::new(1e-12, 1e-12);
+        let mut solver = Rkf78::new(tol);
+
+        // Integrate backward: from tf to 0, with negative step size
+        let (t_final, y_final) = solver.integrate(&sys, tf, &y0, 0.0, -0.1).unwrap();
+
+        assert!((t_final - 0.0).abs() < 1e-10, "t_final = {}", t_final);
+        assert!(
+            (y_final[0] - 1.0).abs() < 1e-10,
+            "y(0) = {}, expected 1.0",
+            y_final[0]
+        );
+        assert!(
+            y_final[1].abs() < 1e-10,
+            "y'(0) = {}, expected 0.0",
+            y_final[1]
+        );
+    }
+
+    #[test]
+    fn test_eccentric_orbit_energy_conservation() {
+        let mu = 398600.4418;
+        let sys = TwoBody { mu };
+
+        // Eccentric orbit: e=0.7, periapsis at 6678 km
+        let rp = 6678.0;
+        let e = 0.7;
+        let a = rp / (1.0 - e);
+
+        // Start at periapsis
+        let v_peri = (mu * (2.0 / rp - 1.0 / a)).sqrt();
+        let y0 = [rp, 0.0, 0.0, 0.0, v_peri, 0.0];
+
+        let period = 2.0 * std::f64::consts::PI * (a.powi(3) / mu).sqrt();
+
+        let compute_energy = |y: &[f64; 6]| {
+            let r = (y[0] * y[0] + y[1] * y[1] + y[2] * y[2]).sqrt();
+            let v2 = y[3] * y[3] + y[4] * y[4] + y[5] * y[5];
+            0.5 * v2 - mu / r
+        };
+
+        let e0 = compute_energy(&y0);
+
+        let tol = Tolerances::new(1e-12, 1e-12);
+        let mut solver = Rkf78::new(tol);
+
+        let (_, y_final) = solver.integrate(&sys, 0.0, &y0, period, 10.0).unwrap();
+
+        let e_final = compute_energy(&y_final);
+        let rel_energy_error = (e_final - e0).abs() / e0.abs();
+
+        assert!(
+            rel_energy_error < 1e-9,
+            "Eccentric orbit (e=0.7) energy drift {} exceeds 1e-9",
+            rel_energy_error
+        );
+    }
+
+    #[test]
+    fn test_hyperbolic_trajectory_energy_conservation() {
+        let mu = 398600.4418;
+        let sys = TwoBody { mu };
+
+        // Hyperbolic trajectory: e=1.5, periapsis at 6678 km
+        let rp = 6678.0;
+        let e = 1.5;
+        let a = rp / (e - 1.0); // a is positive for hyperbola in this convention
+
+        // Start at periapsis
+        let v_peri = (mu * (2.0 / rp + 1.0 / a)).sqrt();
+        let y0 = [rp, 0.0, 0.0, 0.0, v_peri, 0.0];
+
+        let compute_energy = |y: &[f64; 6]| {
+            let r = (y[0] * y[0] + y[1] * y[1] + y[2] * y[2]).sqrt();
+            let v2 = y[3] * y[3] + y[4] * y[4] + y[5] * y[5];
+            0.5 * v2 - mu / r
+        };
+
+        let e0 = compute_energy(&y0);
+        assert!(e0 > 0.0, "Hyperbolic energy should be positive: {}", e0);
+
+        let tol = Tolerances::new(1e-12, 1e-12);
+        let mut solver = Rkf78::new(tol);
+
+        // Integrate for a reasonable time (not too long or spacecraft flies away)
+        let tf = 3600.0; // 1 hour
+        let (_, y_final) = solver.integrate(&sys, 0.0, &y0, tf, 10.0).unwrap();
+
+        let e_final = compute_energy(&y_final);
+        let rel_energy_error = (e_final - e0).abs() / e0.abs();
+
+        assert!(
+            rel_energy_error < 1e-9,
+            "Hyperbolic trajectory energy drift {} exceeds 1e-9",
+            rel_energy_error
+        );
+    }
+
+    #[test]
+    fn test_step_size_too_small_error() {
+        // System with a singularity: y' = -1/y^2, blows up as y->0
+        struct SingularODE;
+        impl OdeSystem<1> for SingularODE {
+            fn rhs(&self, _t: f64, y: &[f64; 1], dydt: &mut [f64; 1]) {
+                dydt[0] = -1.0 / (y[0] * y[0] + 1e-30);
+            }
+        }
+
+        let tol = Tolerances::new(1e-12, 1e-12);
+        let mut solver = Rkf78::new(tol);
+        // Set h_min high enough that the step controller triggers StepSizeTooSmall
+        // before we hit max_steps
+        solver.h_min = 1e-4;
+
+        // y(0) = 0.001 (start very close to singularity so step size shrinks immediately)
+        let result = solver.integrate(&SingularODE, 0.0, &[0.001], 1.0, 0.0001);
+        assert!(
+            matches!(result, Err(IntegrationError::StepSizeTooSmall { .. })),
+            "Expected StepSizeTooSmall, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_max_steps_exceeded() {
+        let tol = Tolerances::new(1e-12, 1e-12);
+        let mut solver = Rkf78::new(tol);
+        solver.max_steps = 5;
+
+        let sys = HarmonicOscillator { omega: 1.0 };
+        let y0 = [1.0, 0.0];
+
+        let result = solver.integrate(&sys, 0.0, &y0, 100.0, 0.01);
+        assert!(
+            matches!(result, Err(IntegrationError::MaxStepsExceeded)),
+            "Expected MaxStepsExceeded, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_step_rejection_with_large_h0() {
+        // Use a very large initial step size; the solver should reject steps and still converge
+        let omega = 1.0;
+        let sys = HarmonicOscillator { omega };
+        let y0 = [1.0, 0.0];
+        let tf = 2.0 * std::f64::consts::PI;
+
+        let tol = Tolerances::new(1e-12, 1e-12);
+        let mut solver = Rkf78::new(tol);
+
+        // h0 = 100 is absurdly large for this problem
+        let (t_final, y_final) = solver.integrate(&sys, 0.0, &y0, tf, 100.0).unwrap();
+
+        // Should still get the right answer
+        assert!((t_final - tf).abs() < 1e-10);
+        assert!(
+            (y_final[0] - 1.0).abs() < 1e-9,
+            "y(2π) = {}, expected 1.0",
+            y_final[0]
+        );
+
+        // Should have some rejected steps
+        assert!(
+            solver.stats.rejected_steps > 0,
+            "Expected step rejections with h0=100"
+        );
+    }
+
+    #[test]
+    fn test_event_near_start() {
+        // y' = 1, y(0) = -0.001. Event: y = 0, should trigger very close to t = 0.001
+        struct LinearGrowth;
+        impl OdeSystem<1> for LinearGrowth {
+            fn rhs(&self, _t: f64, _y: &[f64; 1], dydt: &mut [f64; 1]) {
+                dydt[0] = 1.0;
+            }
+        }
+
+        struct ZeroCrossing;
+        impl EventFunction<1> for ZeroCrossing {
+            fn eval(&self, _t: f64, y: &[f64; 1]) -> f64 {
+                y[0]
+            }
+        }
+
+        let tol = Tolerances::new(1e-12, 1e-12);
+        let mut solver = Rkf78::new(tol);
+
+        let config = EventConfig {
+            direction: EventDirection::Rising,
+            ..Default::default()
+        };
+
+        let result = solver
+            .integrate_to_event(&LinearGrowth, &ZeroCrossing, &config, 0.0, &[-0.001], 10.0, 0.1)
+            .unwrap();
+
+        match result {
+            IntegrationResult::Event(ev) => {
+                // Event should be near t = 0.001
+                assert!(
+                    (ev.t - 0.001).abs() < 0.01,
+                    "Event time {} should be near 0.001",
+                    ev.t
+                );
+            }
+            IntegrationResult::Completed { .. } => {
+                panic!("Expected event near start");
+            }
+        }
+    }
+
+    #[test]
+    fn test_event_near_end() {
+        // y' = 1, y(0) = 0. Event: y = 4.999. tf = 5.0
+        // Event should trigger very close to tf
+        struct LinearGrowth;
+        impl OdeSystem<1> for LinearGrowth {
+            fn rhs(&self, _t: f64, _y: &[f64; 1], dydt: &mut [f64; 1]) {
+                dydt[0] = 1.0;
+            }
+        }
+
+        let event = ThresholdEvent { threshold: 4.999 };
+        let config = EventConfig {
+            direction: EventDirection::Rising,
+            ..Default::default()
+        };
+
+        let tol = Tolerances::new(1e-12, 1e-12);
+        let mut solver = Rkf78::new(tol);
+
+        let result = solver
+            .integrate_to_event(&LinearGrowth, &event, &config, 0.0, &[0.0], 5.0, 0.1)
+            .unwrap();
+
+        match result {
+            IntegrationResult::Event(ev) => {
+                assert!(
+                    (ev.t - 4.999).abs() < 0.01,
+                    "Event time {} should be near 4.999",
+                    ev.t
+                );
+            }
+            IntegrationResult::Completed { .. } => {
+                panic!("Expected event near end");
+            }
+        }
     }
 }
