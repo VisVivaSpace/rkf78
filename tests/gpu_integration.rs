@@ -87,7 +87,7 @@ fn test_circular_orbit_gpu_vs_cpu() {
     let propagator = GpuBatchPropagator::new(TWO_BODY_WGSL).unwrap();
     let state = circular_orbit_state(r0 as f32);
     let params = leo_params(period);
-    let (gpu_states, gpu_statuses) = propagator.propagate_batch(&[state], &params);
+    let (gpu_states, gpu_statuses) = propagator.propagate_batch(&[state], &params).unwrap();
 
     assert_eq!(gpu_statuses[0].status, 1, "GPU trajectory should complete");
 
@@ -134,7 +134,7 @@ fn test_batch_independence() {
 
     // Propagate 100 identical states
     let states: Vec<GpuState> = vec![state; 100];
-    let (gpu_states, gpu_statuses) = propagator.propagate_batch(&states, &params);
+    let (gpu_states, gpu_statuses) = propagator.propagate_batch(&states, &params).unwrap();
 
     // All should complete
     for (i, s) in gpu_statuses.iter().enumerate() {
@@ -181,7 +181,7 @@ fn test_energy_conservation_gpu() {
     };
 
     let e0 = compute_energy(&state);
-    let (gpu_states, _) = propagator.propagate_batch(&[state], &params);
+    let (gpu_states, _) = propagator.propagate_batch(&[state], &params).unwrap();
     let e_final = compute_energy(&gpu_states[0]);
 
     let rel_err = ((e_final - e0) / e0).abs();
@@ -217,7 +217,7 @@ fn test_elliptical_orbit_gpu_vs_cpu() {
         _pad: 0.0,
     };
     let params = leo_params(period as f32);
-    let (gpu_states, gpu_statuses) = propagator.propagate_batch(&[gpu_state], &params);
+    let (gpu_states, gpu_statuses) = propagator.propagate_batch(&[gpu_state], &params).unwrap();
 
     assert_eq!(gpu_statuses[0].status, 1, "GPU trajectory should complete");
 
@@ -260,7 +260,7 @@ fn test_step_rejection_gpu() {
     let mut params = leo_params(period);
     params.h_init = 5000.0; // much larger than orbital period / 10
 
-    let (_, gpu_statuses) = propagator.propagate_batch(&[state], &params);
+    let (_, gpu_statuses) = propagator.propagate_batch(&[state], &params).unwrap();
 
     assert_eq!(gpu_statuses[0].status, 1, "Should still complete");
     assert!(
@@ -288,7 +288,7 @@ fn test_multi_dispatch_completion() {
     let mut params = leo_params(period);
     params.max_steps_per_dispatch = 10;
 
-    let (gpu_states, gpu_statuses) = propagator.propagate_batch(&[state], &params);
+    let (gpu_states, gpu_statuses) = propagator.propagate_batch(&[state], &params).unwrap();
 
     assert_eq!(
         gpu_statuses[0].status, 1,

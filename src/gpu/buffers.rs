@@ -2,16 +2,21 @@
 
 use bytemuck::Pod;
 
+use super::GpuError;
+
 /// Read data from a GPU storage buffer back to the CPU.
 ///
 /// Creates a staging buffer, copies from the source buffer, maps it,
 /// and returns the data as a `Vec<T>`.
+///
+/// # Errors
+/// Returns `GpuError::ReadbackFailed` if the buffer mapping or channel communication fails.
 pub fn read_buffer<T: Pod>(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     buffer: &wgpu::Buffer,
     count: usize,
-) -> Vec<T> {
+) -> Result<Vec<T>, GpuError> {
     let byte_size = (count * std::mem::size_of::<T>()) as u64;
 
     // Create a staging buffer for readback
@@ -33,18 +38,18 @@ pub fn read_buffer<T: Pod>(
     let slice = staging.slice(..);
     let (sender, receiver) = std::sync::mpsc::channel();
     slice.map_async(wgpu::MapMode::Read, move |result| {
-        sender.send(result).unwrap();
+        let _ = sender.send(result);
     });
     device.poll(wgpu::Maintain::Wait);
     receiver
         .recv()
-        .expect("GPU readback channel closed")
-        .expect("GPU buffer mapping failed");
+        .map_err(|e| GpuError::ReadbackFailed(format!("channel closed: {}", e)))?
+        .map_err(|e| GpuError::ReadbackFailed(format!("buffer mapping failed: {}", e)))?;
 
     let data = slice.get_mapped_range();
     let result: Vec<T> = bytemuck::cast_slice(&data).to_vec();
     drop(data);
     staging.unmap();
 
-    result
+    Ok(result)
 }

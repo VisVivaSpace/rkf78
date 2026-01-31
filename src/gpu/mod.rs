@@ -25,13 +25,15 @@ pub use types::{GpuIntegrationParams, GpuState, TrajectoryStatus};
 use pipeline::Rkf78GpuPipeline;
 use wgpu::util::DeviceExt;
 
-/// Errors from GPU initialization.
+/// Errors from GPU operations.
 #[derive(Debug)]
 pub enum GpuError {
     /// No suitable GPU adapter was found.
     AdapterNotFound,
     /// Failed to create GPU device.
     DeviceCreationFailed(String),
+    /// GPU buffer readback failed.
+    ReadbackFailed(String),
 }
 
 impl std::fmt::Display for GpuError {
@@ -39,6 +41,7 @@ impl std::fmt::Display for GpuError {
         match self {
             GpuError::AdapterNotFound => write!(f, "No suitable GPU adapter found"),
             GpuError::DeviceCreationFailed(msg) => write!(f, "GPU device creation failed: {}", msg),
+            GpuError::ReadbackFailed(msg) => write!(f, "GPU buffer readback failed: {}", msg),
         }
     }
 }
@@ -98,11 +101,14 @@ impl GpuBatchPropagator {
     ///
     /// # Returns
     /// `(final_states, statuses)` — one entry per trajectory
+    ///
+    /// # Errors
+    /// Returns `GpuError::ReadbackFailed` if GPU buffer readback fails.
     pub fn propagate_batch(
         &self,
         initial_states: &[GpuState],
         params: &GpuIntegrationParams,
-    ) -> (Vec<GpuState>, Vec<TrajectoryStatus>) {
+    ) -> Result<(Vec<GpuState>, Vec<TrajectoryStatus>), GpuError> {
         let n = initial_states.len();
         let device = &self.pipeline.device;
         let queue = &self.pipeline.queue;
@@ -179,22 +185,22 @@ impl GpuBatchPropagator {
 
             // Read back status to check completion
             let statuses: Vec<TrajectoryStatus> =
-                buffers::read_buffer(device, queue, &status_buffer, n);
+                buffers::read_buffer(device, queue, &status_buffer, n)?;
 
             let all_done = statuses.iter().all(|s| s.status == 1 || s.status == 2);
             if all_done {
                 // Read final states and return
                 let final_states: Vec<GpuState> =
-                    buffers::read_buffer(device, queue, &current_buffer, n);
-                return (final_states, statuses);
+                    buffers::read_buffer(device, queue, &current_buffer, n)?;
+                return Ok((final_states, statuses));
             }
         }
 
         // If we get here, read whatever we have
-        let final_states: Vec<GpuState> = buffers::read_buffer(device, queue, &current_buffer, n);
+        let final_states: Vec<GpuState> = buffers::read_buffer(device, queue, &current_buffer, n)?;
         let final_statuses: Vec<TrajectoryStatus> =
-            buffers::read_buffer(device, queue, &status_buffer, n);
-        (final_states, final_statuses)
+            buffers::read_buffer(device, queue, &status_buffer, n)?;
+        Ok((final_states, final_statuses))
     }
 }
 

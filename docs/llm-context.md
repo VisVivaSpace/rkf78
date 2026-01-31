@@ -181,13 +181,13 @@ pub struct GpuBatchPropagator { /* private */ }
 impl GpuBatchPropagator {
     pub fn new(force_model_wgsl: &str) -> Result<Self, GpuError>;
     pub fn propagate_batch(&self, states: &[GpuState], params: &GpuIntegrationParams)
-        -> (Vec<GpuState>, Vec<TrajectoryStatus>);
+        -> Result<(Vec<GpuState>, Vec<TrajectoryStatus>), GpuError>;
 }
 
 // GpuState — 32 bytes, f32 precision (position, velocity, epoch)
 // GpuIntegrationParams — 48 bytes (mu, t_final, tolerances, step limits)
 // TrajectoryStatus — 16 bytes (status: 0=active/1=completed/2=failed, steps, rejected, h_final)
-// GpuError — AdapterNotFound | DeviceCreationFailed(String)
+// GpuError — AdapterNotFound | DeviceCreationFailed(String) | ReadbackFailed(String)
 ```
 
 ## Gotchas

@@ -344,3 +344,86 @@ Replace linear interpolation with Hermite cubic in `find_event_root()`.
 1. "Add CPU examples: harmonic oscillator, two-body orbit, event detection"
 2. "Update README, lib.rs docs, and llm-context.md for GPU feature and examples"
 3. "Upgrade event state interpolation from linear to Hermite cubic"
+
+## Review
+
+### Summary
+
+Added 3 CPU examples, updated all documentation to cover GPU feature, and upgraded event state interpolation from linear to Hermite cubic.
+
+### Files Created
+
+| File | Description |
+|------|-------------|
+| `examples/harmonic_oscillator.rs` | Basic OdeSystem<2>, compares with exact cos/sin solution |
+| `examples/two_body_orbit.rs` | Keplerian 6-state with per-component tolerances, energy conservation |
+| `examples/event_detection.rs` | Periapsis detection with both EventAction::Stop and Continue |
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `README.md` | GPU feature bullet, test count 32→56, GPU section, Examples table, build commands |
+| `src/lib.rs` | GPU feature bullet, uncommented event example (rust,ignore), fixed algorithm.md URL, GPU section |
+| `docs/llm-context.md` | src/gpu/ module row, GPU API surface section, f32 precision gotcha, Hermite interpolation gotcha |
+| `src/solver.rs` | `find_event_root()`: linear → Hermite cubic interpolation; updated doc comments O(h²) → O(h⁴) |
+
+### Production Code Changes
+
+Only one function changed: `find_event_root()` in `src/solver.rs`. The change:
+- Computes `f_a = rhs(t_a, y_a)` and `f_b = rhs(t_b, y_b)` (2 RHS evals per event, not per step)
+- Replaces `y = y_a + α(y_b - y_a)` with Hermite cubic basis functions `h00, h10, h01, h11`
+- Shared `hermite_interp` closure used by both Brent's root-finding and final state computation
+
+### Event Detection Accuracy Improvement
+
+Tested on elliptical orbit (400 × 2000 km), periapsis radius error:
+
+| Crossing | Before (linear) | After (Hermite) |
+|----------|-----------------|-----------------|
+| #1 | 6.94 km | 1.56e-3 km |
+| #2 | 5.84 km | 1.10e-3 km |
+| #3 | 6.87 km | 1.53e-3 km |
+| #4 | 5.84 km | 1.10e-3 km |
+
+~4,500× improvement for 2 extra RHS evaluations per event.
+
+### Final State
+
+56 tests passing, all 4 examples run, clippy clean, fmt clean.
+
+---
+
+# Fix AI Code Review Findings
+
+## Finding 1: Fix Cargo.toml placeholder URL
+- [x] Comment out `repository` line since real URL isn't known yet
+
+## Finding 2: Make GPU `read_buffer()` return `Result`
+- [x] Add `GpuError::ReadbackFailed(String)` variant
+- [x] Change `read_buffer()` to return `Result<Vec<T>, GpuError>`
+- [x] Change `propagate_batch()` to return `Result<(Vec<GpuState>, Vec<TrajectoryStatus>), GpuError>`
+- [x] Add `.unwrap()` to all `propagate_batch()` calls in `tests/gpu_integration.rs`
+- [x] Add `.expect("GPU propagation failed")` to `examples/gpu_two_body.rs`
+- [x] Update `docs/llm-context.md` API surface
+
+## Review
+
+### Summary
+
+Fixed two AI code review findings: commented out placeholder repository URL in Cargo.toml, and made GPU buffer readback return `Result` instead of panicking.
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `Cargo.toml` | Commented out placeholder repository URL |
+| `src/gpu/buffers.rs` | `read_buffer()` returns `Result<Vec<T>, GpuError>` instead of `Vec<T>` |
+| `src/gpu/mod.rs` | Added `ReadbackFailed` variant to `GpuError`; `propagate_batch()` returns `Result` |
+| `tests/gpu_integration.rs` | Added `.unwrap()` to 6 `propagate_batch()` calls |
+| `examples/gpu_two_body.rs` | Added `.expect("GPU propagation failed")` |
+| `docs/llm-context.md` | Updated `propagate_batch` signature and `GpuError` variants |
+
+### Verification
+
+All 56 tests passing (50 CPU + 6 GPU integration), GPU example runs, clippy clean, fmt clean.
