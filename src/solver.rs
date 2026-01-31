@@ -293,6 +293,7 @@ impl<const N: usize> Rkf78<N> {
     }
     
     /// Compute all 13 stages
+    #[allow(clippy::needless_range_loop)]
     fn compute_stages<S: OdeSystem<N>>(&mut self, sys: &S, t: f64, y: &[f64; N], h: f64) {
         let mut y_temp = [0.0; N];
         
@@ -316,6 +317,7 @@ impl<const N: usize> Rkf78<N> {
     }
     
     /// Compute the 8th order solution from the stages
+    #[allow(clippy::needless_range_loop)]
     fn compute_solution(&self, y: &[f64; N], h: f64) -> [f64; N] {
         let mut y_new = [0.0; N];
         
@@ -335,6 +337,7 @@ impl<const N: usize> Rkf78<N> {
     /// Uses the infinity norm of the scaled error:
     /// error = max_i( |h * sum_j (b[j] - b_hat[j]) * k[j][i]| / scale[i] )
     /// where scale[i] = atol[i] + rtol[i] * |y8[i]|
+    #[allow(clippy::needless_range_loop)]
     fn compute_error(&self, y8: &[f64; N], h: f64) -> f64 {
         let mut max_err: f64 = 0.0;
 
@@ -451,6 +454,7 @@ impl<const N: usize> Rkf78<N> {
     ///
     /// let result = solver.integrate_to_event(&sys, &event, &config, t0, &y0, tf, h0);
     /// ```
+    #[allow(clippy::too_many_arguments)]
     pub fn integrate_to_event<S, E>(
         &mut self,
         sys: &S,
@@ -563,6 +567,7 @@ impl<const N: usize> Rkf78<N> {
     ///
     /// This interpolates the state between two integration steps to
     /// evaluate the event function at intermediate times.
+    #[allow(clippy::too_many_arguments)]
     fn find_event_root<S, E>(
         &mut self,
         _sys: &S,

@@ -55,35 +55,25 @@ pub trait EventFunction<const N: usize> {
 }
 
 /// Direction of zero-crossing to detect
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EventDirection {
     /// Detect when g goes from negative to positive (increasing through zero)
     Rising,
     /// Detect when g goes from positive to negative (decreasing through zero)
     Falling,
     /// Detect any zero crossing
+    #[default]
     Any,
 }
 
-impl Default for EventDirection {
-    fn default() -> Self {
-        EventDirection::Any
-    }
-}
-
 /// Action to take when an event is detected
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EventAction {
     /// Stop integration at this event
+    #[default]
     Stop,
     /// Record the event but continue integration
     Continue,
-}
-
-impl Default for EventAction {
-    fn default() -> Self {
-        EventAction::Stop
-    }
 }
 
 /// Configuration for an event
@@ -209,16 +199,15 @@ impl BrentSolver {
             }
 
             // Try inverse quadratic interpolation or secant
-            let s;
-            if fa != fc && fb != fc {
+            let s = if fa != fc && fb != fc {
                 // Inverse quadratic interpolation
-                s = a * fb * fc / ((fa - fb) * (fa - fc))
+                a * fb * fc / ((fa - fb) * (fa - fc))
                     + b * fa * fc / ((fb - fa) * (fb - fc))
-                    + c * fa * fb / ((fc - fa) * (fc - fb));
+                    + c * fa * fb / ((fc - fa) * (fc - fb))
             } else {
                 // Secant method
-                s = b - fb * (b - a) / (fb - fa);
-            }
+                b - fb * (b - a) / (fb - fa)
+            };
 
             // Conditions for rejecting s and falling back to bisection
             let mid = (a + b) / 2.0;
