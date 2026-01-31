@@ -3,8 +3,8 @@ name = "rkf78"
 version = "0.1.0"
 edition = "2021"
 description = "Runge-Kutta-Fehlberg 7(8) integrator for spacecraft trajectory propagation"
-license = "MIT OR Apache-2.0"
-# repository = "https://github.com/your-org/astrodynamics"  # TODO: set before publishing
+license = "MIT"
+repository = "https://github.com/VisVivaSpace/rkf78"
 keywords = ["ode", "integrator", "runge-kutta", "astrodynamics", "trajectory"]
 categories = ["science", "simulation", "mathematics"]
 

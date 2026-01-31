@@ -450,3 +450,39 @@ The codebase naming conventions are fully compliant with RFC 430. The only issue
 - All tests pass (CPU + GPU)
 - Clippy clean
 - Formatting clean
+
+---
+
+# Prepare for crates.io Publishing
+
+## DO NOT modify:
+`src/solver.rs`, `src/events.rs`, `src/coefficients.rs`, `src/gpu/`, examples, tests
+
+## Tasks
+
+- [x] Add `Cargo.lock` to `.gitignore` and untrack it with `git rm --cached`
+- [x] Fix license to MIT-only in `Cargo.toml`
+- [x] Fix license text in `README.md`
+- [x] Uncomment and set repository URL in `Cargo.toml`
+- [x] Run verification: tests, clippy, fmt, dry-run publish
+
+## Review
+
+### Summary
+
+Prepared crate for crates.io publishing: license set to MIT-only, repository URL set, `Cargo.lock` untracked (library crate convention).
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `.gitignore` | Added `Cargo.lock` |
+| `Cargo.toml` | `license` → `"MIT"`, `repository` → `"https://github.com/VisVivaSpace/rkf78"` |
+| `README.md` | License text updated to MIT-only |
+
+### Verification
+
+- 56 tests passing (50 CPU + 6 GPU integration)
+- Clippy clean
+- Formatting clean
+- `cargo publish --dry-run` succeeds (26 files, 235 KB)

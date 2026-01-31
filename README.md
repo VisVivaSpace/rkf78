@@ -127,4 +127,4 @@ See [`examples/gpu_two_body.rs`](examples/gpu_two_body.rs) for a complete exampl
 
 ## License
 
-Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT License](LICENSE-MIT) at your option.
+Licensed under the [MIT License](LICENSE).
