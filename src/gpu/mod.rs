@@ -1,9 +1,18 @@
 //! GPU batch propagation for parallel trajectory integration.
 //!
-//! This module provides GPU-accelerated batch propagation of Keplerian
-//! trajectories using wgpu compute shaders. It supplements (not replaces)
-//! the CPU solver — use the CPU solver for single trajectories requiring
-//! f64 precision or event detection.
+//! This module provides GPU-accelerated batch propagation of trajectories
+//! using wgpu compute shaders. It supplements (not replaces) the CPU
+//! solver — use the CPU solver for single trajectories requiring f64
+//! precision or event detection.
+//!
+//! The force model is user-supplied as a WGSL string. You must provide a
+//! function with this signature:
+//!
+//! ```wgsl
+//! fn compute_rhs(pos: vec3<f32>, vel: vec3<f32>, mu: f32) -> Deriv
+//! ```
+//!
+//! See `examples/gpu_two_body.rs` for a Keplerian two-body implementation.
 //!
 //! Enable with `cargo build --features gpu`.
 
@@ -19,25 +28,40 @@ use wgpu::util::DeviceExt;
 /// GPU batch propagator for parallel trajectory integration.
 ///
 /// Wraps a wgpu compute pipeline and provides a synchronous API for
-/// propagating batches of Keplerian trajectories on the GPU.
+/// propagating batches of trajectories on the GPU.
+///
+/// The force model is user-supplied as a WGSL string containing a
+/// `compute_rhs` function. Example (Keplerian two-body):
+///
+/// ```ignore
+/// let two_body_wgsl = r#"
+/// fn compute_rhs(pos: vec3<f32>, vel: vec3<f32>, mu: f32) -> Deriv {
+///     let r2 = dot(pos, pos);
+///     let r  = sqrt(r2);
+///     let r3 = r2 * r;
+///     var d: Deriv;
+///     d.dp = vel;
+///     d.dv = -mu / r3 * pos;
+///     return d;
+/// }
+/// "#;
+/// let propagator = GpuBatchPropagator::new(two_body_wgsl);
+/// ```
 pub struct GpuBatchPropagator {
     pipeline: Rkf78GpuPipeline,
 }
 
-impl Default for GpuBatchPropagator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl GpuBatchPropagator {
-    /// Create a new GPU batch propagator.
+    /// Create a new GPU batch propagator with a user-supplied force model.
+    ///
+    /// # Arguments
+    /// * `force_model_wgsl` — WGSL source defining `fn compute_rhs(pos: vec3<f32>, vel: vec3<f32>, mu: f32) -> Deriv`
     ///
     /// Initializes the wgpu instance, adapter, device, and compiles the
     /// compute shader. Panics if no suitable GPU is found.
-    pub fn new() -> Self {
+    pub fn new(force_model_wgsl: &str) -> Self {
         Self {
-            pipeline: Rkf78GpuPipeline::new(),
+            pipeline: Rkf78GpuPipeline::new(force_model_wgsl),
         }
     }
 

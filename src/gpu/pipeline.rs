@@ -14,19 +14,21 @@ pub struct Rkf78GpuPipeline {
     pub bind_group_layout: wgpu::BindGroupLayout,
 }
 
-impl Default for Rkf78GpuPipeline {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Rkf78GpuPipeline {
-    /// Create the pipeline. Uses `pollster::block_on` for synchronous initialization.
-    pub fn new() -> Self {
-        pollster::block_on(Self::new_async())
+    /// Create the pipeline with a user-supplied WGSL force model.
+    ///
+    /// The `force_model_wgsl` string must define:
+    /// ```wgsl
+    /// fn compute_rhs(pos: vec3<f32>, vel: vec3<f32>, mu: f32) -> Deriv
+    /// ```
+    /// This is prepended to the RKF78 engine shader at pipeline creation time.
+    ///
+    /// Uses `pollster::block_on` for synchronous initialization.
+    pub fn new(force_model_wgsl: &str) -> Self {
+        pollster::block_on(Self::new_async(force_model_wgsl.to_owned()))
     }
 
-    async fn new_async() -> Self {
+    async fn new_async(force_model_wgsl: String) -> Self {
         let instance = wgpu::Instance::default();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -49,9 +51,12 @@ impl Rkf78GpuPipeline {
             .await
             .expect("Failed to create GPU device");
 
+        let engine = include_str!("shader.wgsl");
+        let full_shader = format!("{}\n{}", force_model_wgsl, engine);
+
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("RKF78 Shader"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader.wgsl"))),
+            source: wgpu::ShaderSource::Wgsl(Cow::Owned(full_shader)),
         });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

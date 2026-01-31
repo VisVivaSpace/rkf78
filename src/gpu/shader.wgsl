@@ -3,7 +3,13 @@
 // Coefficients from NASA TR R-287, Table X (Fehlberg, 1968).
 // Each GPU thread independently propagates one trajectory.
 //
-// Force model: Keplerian two-body (mu/r^2).
+// USER-SUPPLIED FUNCTION REQUIRED:
+//
+//   fn compute_rhs(pos: vec3<f32>, vel: vec3<f32>, mu: f32) -> Deriv
+//
+// This function computes dy/dt = [velocity, acceleration].
+// It is concatenated with this shader at pipeline creation time.
+// See examples/gpu_two_body.rs for a Keplerian two-body implementation.
 //
 // NOTE: Buffer structs use scalar fields (not vec3) to match Rust repr(C)
 // layout. WGSL vec3<f32> has 16-byte alignment which would add padding.
@@ -90,27 +96,11 @@ const B_ERR: array<f32, 13> = array<f32, 13>(
 fn load_pos(s: State) -> vec3<f32> { return vec3<f32>(s.px, s.py, s.pz); }
 fn load_vel(s: State) -> vec3<f32> { return vec3<f32>(s.vx, s.vy, s.vz); }
 
-// ─── Force model ────────────────────────────────────────────────────────
-
-fn two_body_accel(pos: vec3<f32>, mu: f32) -> vec3<f32> {
-    let r2 = dot(pos, pos);
-    let r  = sqrt(r2);
-    let r3 = r2 * r;
-    return -mu / r3 * pos;
-}
-
-// ─── RHS: dy/dt = [v, a] ───────────────────────────────────────────────
+// ─── RHS struct (used by user-supplied compute_rhs) ─────────────────────
 
 struct Deriv {
     dp: vec3<f32>,  // d(pos)/dt = vel
     dv: vec3<f32>,  // d(vel)/dt = accel
-}
-
-fn compute_rhs(pos: vec3<f32>, vel: vec3<f32>, mu: f32) -> Deriv {
-    var d: Deriv;
-    d.dp = vel;
-    d.dv = two_body_accel(pos, mu);
-    return d;
 }
 
 // ─── 13-stage RKF78 step ────────────────────────────────────────────────
