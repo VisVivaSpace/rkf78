@@ -1,0 +1,29 @@
+[package]
+name = "rkf78"
+version = "0.1.0"
+edition = "2021"
+description = "Runge-Kutta-Fehlberg 7(8) integrator for spacecraft trajectory propagation"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/your-org/astrodynamics"
+keywords = ["ode", "integrator", "runge-kutta", "astrodynamics", "trajectory"]
+categories = ["science", "simulation", "mathematics"]
+
+[dependencies]
+# Intentionally minimal - no external deps for core functionality
+
+[dev-dependencies]
+approx = "0.5"
+criterion = "0.5"
+
+# [[bench]]
+# name = "integration"
+# harness = false
+
+[features]
+default = []
+# Future: nalgebra support for vector types
+# nalgebra = ["dep:nalgebra"]
+
+[profile.release]
+lto = true
+codegen-units = 1

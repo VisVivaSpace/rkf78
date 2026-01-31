@@ -1,0 +1,10 @@
+.claude/
+.DS_Store
+CLAUDE.md
+target/
+/tasks
+/notes
+# Fortran build artifacts
+fortran/*.mod
+fortran/*.dylib
+fortran/*.so
