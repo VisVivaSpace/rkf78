@@ -2,10 +2,8 @@
 
 A high-precision Runge-Kutta-Fehlberg 7(8) ODE integrator in Rust for spacecraft trajectory propagation.
 
-<!-- Uncomment when published:
 [![Crates.io](https://img.shields.io/crates/v/rkf78.svg)](https://crates.io/crates/rkf78)
 [![docs.rs](https://docs.rs/rkf78/badge.svg)](https://docs.rs/rkf78)
--->
 
 ## Features
 
