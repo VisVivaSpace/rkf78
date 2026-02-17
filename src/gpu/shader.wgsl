@@ -5,10 +5,12 @@
 //
 // USER-SUPPLIED FUNCTION REQUIRED:
 //
-//   fn compute_rhs(pos: vec3<f32>, vel: vec3<f32>, mu: f32) -> Deriv
+//   fn compute_rhs(pos: vec3<f32>, vel: vec3<f32>) -> Deriv
 //
 // This function computes dy/dt = [velocity, acceleration].
 // It is concatenated with this shader at pipeline creation time.
+// Force model parameters should be declared in the user's WGSL as a
+// uniform buffer at @group(0) @binding(4).
 // See examples/gpu_two_body.rs for a Keplerian two-body implementation.
 //
 // NOTE: Buffer structs use scalar fields (not vec3) to match Rust repr(C)
@@ -33,7 +35,6 @@ struct TrajectoryStatus {
 // 4 × 4 = 16 bytes — matches Rust TrajectoryStatus
 
 struct IntegrationParams {
-    mu: f32,
     t_final: f32,
     h_init: f32,
     h_min: f32,
@@ -42,11 +43,8 @@ struct IntegrationParams {
     atol_pos: f32,
     atol_vel: f32,
     max_steps_per_dispatch: u32,
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
 }
-// 12 × 4 = 48 bytes — matches Rust GpuIntegrationParams
+// 8 × 4 = 32 bytes — matches Rust GpuIntegrationParams
 
 // ─── Buffer bindings ────────────────────────────────────────────────────
 
@@ -118,7 +116,6 @@ fn rkf78_step(
     pos: vec3<f32>,
     vel: vec3<f32>,
     h: f32,
-    mu: f32,
     atol_pos: f32,
     atol_vel: f32,
     rtol: f32,
@@ -132,91 +129,91 @@ fn rkf78_step(
     var tv: vec3<f32>;  // temp velocity
 
     // ── Stage 0: k0 = f(t, y) ───────────────────────────────────────
-    let d0 = compute_rhs(pos, vel, mu);
+    let d0 = compute_rhs(pos, vel);
     kp[0] = d0.dp;
     kv[0] = d0.dv;
 
     // ── Stage 1: A[1][0] = 2/27 ─────────────────────────────────────
     tp = pos + h * (2.0/27.0) * kp[0];
     tv = vel + h * (2.0/27.0) * kv[0];
-    let d1 = compute_rhs(tp, tv, mu);
+    let d1 = compute_rhs(tp, tv);
     kp[1] = d1.dp;
     kv[1] = d1.dv;
 
     // ── Stage 2: A[2][0] = 1/36, A[2][1] = 1/12 ────────────────────
     tp = pos + h * ((1.0/36.0) * kp[0] + (1.0/12.0) * kp[1]);
     tv = vel + h * ((1.0/36.0) * kv[0] + (1.0/12.0) * kv[1]);
-    let d2 = compute_rhs(tp, tv, mu);
+    let d2 = compute_rhs(tp, tv);
     kp[2] = d2.dp;
     kv[2] = d2.dv;
 
     // ── Stage 3: A[3][0] = 1/24, A[3][2] = 1/8 ─────────────────────
     tp = pos + h * ((1.0/24.0) * kp[0] + (1.0/8.0) * kp[2]);
     tv = vel + h * ((1.0/24.0) * kv[0] + (1.0/8.0) * kv[2]);
-    let d3 = compute_rhs(tp, tv, mu);
+    let d3 = compute_rhs(tp, tv);
     kp[3] = d3.dp;
     kv[3] = d3.dv;
 
     // ── Stage 4: A[4][0] = 5/12, A[4][2] = -25/16, A[4][3] = 25/16
     tp = pos + h * ((5.0/12.0) * kp[0] + (-25.0/16.0) * kp[2] + (25.0/16.0) * kp[3]);
     tv = vel + h * ((5.0/12.0) * kv[0] + (-25.0/16.0) * kv[2] + (25.0/16.0) * kv[3]);
-    let d4 = compute_rhs(tp, tv, mu);
+    let d4 = compute_rhs(tp, tv);
     kp[4] = d4.dp;
     kv[4] = d4.dv;
 
     // ── Stage 5: A[5][0] = 1/20, A[5][3] = 1/4, A[5][4] = 1/5 ─────
     tp = pos + h * ((1.0/20.0) * kp[0] + (1.0/4.0) * kp[3] + (1.0/5.0) * kp[4]);
     tv = vel + h * ((1.0/20.0) * kv[0] + (1.0/4.0) * kv[3] + (1.0/5.0) * kv[4]);
-    let d5 = compute_rhs(tp, tv, mu);
+    let d5 = compute_rhs(tp, tv);
     kp[5] = d5.dp;
     kv[5] = d5.dv;
 
     // ── Stage 6: A[6][0] = -25/108, A[6][3] = 125/108, A[6][4] = -65/27, A[6][5] = 125/54
     tp = pos + h * ((-25.0/108.0) * kp[0] + (125.0/108.0) * kp[3] + (-65.0/27.0) * kp[4] + (125.0/54.0) * kp[5]);
     tv = vel + h * ((-25.0/108.0) * kv[0] + (125.0/108.0) * kv[3] + (-65.0/27.0) * kv[4] + (125.0/54.0) * kv[5]);
-    let d6 = compute_rhs(tp, tv, mu);
+    let d6 = compute_rhs(tp, tv);
     kp[6] = d6.dp;
     kv[6] = d6.dv;
 
     // ── Stage 7: A[7][0] = 31/300, A[7][4] = 61/225, A[7][5] = -2/9, A[7][6] = 13/900
     tp = pos + h * ((31.0/300.0) * kp[0] + (61.0/225.0) * kp[4] + (-2.0/9.0) * kp[5] + (13.0/900.0) * kp[6]);
     tv = vel + h * ((31.0/300.0) * kv[0] + (61.0/225.0) * kv[4] + (-2.0/9.0) * kv[5] + (13.0/900.0) * kv[6]);
-    let d7 = compute_rhs(tp, tv, mu);
+    let d7 = compute_rhs(tp, tv);
     kp[7] = d7.dp;
     kv[7] = d7.dv;
 
     // ── Stage 8: A[8][0]=2, A[8][3]=-53/6, A[8][4]=704/45, A[8][5]=-107/9, A[8][6]=67/90, A[8][7]=3
     tp = pos + h * (2.0 * kp[0] + (-53.0/6.0) * kp[3] + (704.0/45.0) * kp[4] + (-107.0/9.0) * kp[5] + (67.0/90.0) * kp[6] + 3.0 * kp[7]);
     tv = vel + h * (2.0 * kv[0] + (-53.0/6.0) * kv[3] + (704.0/45.0) * kv[4] + (-107.0/9.0) * kv[5] + (67.0/90.0) * kv[6] + 3.0 * kv[7]);
-    let d8 = compute_rhs(tp, tv, mu);
+    let d8 = compute_rhs(tp, tv);
     kp[8] = d8.dp;
     kv[8] = d8.dv;
 
     // ── Stage 9: A[9][0]=-91/108, A[9][3]=23/108, A[9][4]=-976/135, A[9][5]=311/54, A[9][6]=-19/60, A[9][7]=17/6, A[9][8]=-1/12
     tp = pos + h * ((-91.0/108.0) * kp[0] + (23.0/108.0) * kp[3] + (-976.0/135.0) * kp[4] + (311.0/54.0) * kp[5] + (-19.0/60.0) * kp[6] + (17.0/6.0) * kp[7] + (-1.0/12.0) * kp[8]);
     tv = vel + h * ((-91.0/108.0) * kv[0] + (23.0/108.0) * kv[3] + (-976.0/135.0) * kv[4] + (311.0/54.0) * kv[5] + (-19.0/60.0) * kv[6] + (17.0/6.0) * kv[7] + (-1.0/12.0) * kv[8]);
-    let d9 = compute_rhs(tp, tv, mu);
+    let d9 = compute_rhs(tp, tv);
     kp[9] = d9.dp;
     kv[9] = d9.dv;
 
     // ── Stage 10: A[10][0]=2383/4100, A[10][3]=-341/164, A[10][4]=4496/1025, A[10][5]=-301/82, A[10][6]=2133/4100, A[10][7]=45/82, A[10][8]=45/164, A[10][9]=18/41
     tp = pos + h * ((2383.0/4100.0) * kp[0] + (-341.0/164.0) * kp[3] + (4496.0/1025.0) * kp[4] + (-301.0/82.0) * kp[5] + (2133.0/4100.0) * kp[6] + (45.0/82.0) * kp[7] + (45.0/164.0) * kp[8] + (18.0/41.0) * kp[9]);
     tv = vel + h * ((2383.0/4100.0) * kv[0] + (-341.0/164.0) * kv[3] + (4496.0/1025.0) * kv[4] + (-301.0/82.0) * kv[5] + (2133.0/4100.0) * kv[6] + (45.0/82.0) * kv[7] + (45.0/164.0) * kv[8] + (18.0/41.0) * kv[9]);
-    let d10 = compute_rhs(tp, tv, mu);
+    let d10 = compute_rhs(tp, tv);
     kp[10] = d10.dp;
     kv[10] = d10.dv;
 
     // ── Stage 11: A[11][0]=3/205, A[11][5]=-6/41, A[11][6]=-3/205, A[11][7]=-3/41, A[11][8]=3/41, A[11][9]=6/41
     tp = pos + h * ((3.0/205.0) * kp[0] + (-6.0/41.0) * kp[5] + (-3.0/205.0) * kp[6] + (-3.0/41.0) * kp[7] + (3.0/41.0) * kp[8] + (6.0/41.0) * kp[9]);
     tv = vel + h * ((3.0/205.0) * kv[0] + (-6.0/41.0) * kv[5] + (-3.0/205.0) * kv[6] + (-3.0/41.0) * kv[7] + (3.0/41.0) * kv[8] + (6.0/41.0) * kv[9]);
-    let d11 = compute_rhs(tp, tv, mu);
+    let d11 = compute_rhs(tp, tv);
     kp[11] = d11.dp;
     kv[11] = d11.dv;
 
     // ── Stage 12: A[12][0]=-1777/4100, A[12][3]=-341/164, A[12][4]=4496/1025, A[12][5]=-289/82, A[12][6]=2193/4100, A[12][7]=51/82, A[12][8]=33/164, A[12][9]=12/41, A[12][11]=1
     tp = pos + h * ((-1777.0/4100.0) * kp[0] + (-341.0/164.0) * kp[3] + (4496.0/1025.0) * kp[4] + (-289.0/82.0) * kp[5] + (2193.0/4100.0) * kp[6] + (51.0/82.0) * kp[7] + (33.0/164.0) * kp[8] + (12.0/41.0) * kp[9] + 1.0 * kp[11]);
     tv = vel + h * ((-1777.0/4100.0) * kv[0] + (-341.0/164.0) * kv[3] + (4496.0/1025.0) * kv[4] + (-289.0/82.0) * kv[5] + (2193.0/4100.0) * kv[6] + (51.0/82.0) * kv[7] + (33.0/164.0) * kv[8] + (12.0/41.0) * kv[9] + 1.0 * kv[11]);
-    let d12 = compute_rhs(tp, tv, mu);
+    let d12 = compute_rhs(tp, tv);
     kp[12] = d12.dp;
     kv[12] = d12.dv;
 
@@ -281,7 +278,6 @@ fn propagate(@builtin(global_invocation_id) global_id: vec3<u32>) {
         h = params.h_init;
     }
 
-    let mu       = params.mu;
     let t_final  = params.t_final;
     let h_min    = params.h_min;
     let h_max    = params.h_max;
@@ -306,7 +302,7 @@ fn propagate(@builtin(global_invocation_id) global_id: vec3<u32>) {
         h_step = clamp(h_step, h_min, h_max);
 
         // Take a step
-        let result = rkf78_step(pos, vel, h_step, mu, atol_pos, atol_vel, rtol);
+        let result = rkf78_step(pos, vel, h_step, atol_pos, atol_vel, rtol);
 
         if result.error <= 1.0 {
             // Accept step

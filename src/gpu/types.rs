@@ -25,7 +25,19 @@ pub struct GpuState {
     /// Current epoch [seconds from reference]
     pub epoch: f32,
     /// Padding for 16-byte alignment
-    pub _pad: f32,
+    _pad: f32,
+}
+
+impl GpuState {
+    /// Create a new GPU state.
+    pub fn new(position: [f32; 3], velocity: [f32; 3], epoch: f32) -> Self {
+        Self {
+            position,
+            velocity,
+            epoch,
+            _pad: 0.0,
+        }
+    }
 }
 
 /// Per-trajectory status and metadata.
@@ -46,12 +58,14 @@ pub struct TrajectoryStatus {
 
 /// Integration parameters uniform across the batch.
 ///
-/// Layout: 48 bytes total (9 fields + 3 padding u32).
+/// Contains only integrator control parameters. Force model parameters
+/// (e.g., gravitational parameter, J2 coefficients) are passed separately
+/// via a user-defined struct bound at binding 4.
+///
+/// Layout: 32 bytes total (7 × f32 + 1 × u32).
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct GpuIntegrationParams {
-    /// Gravitational parameter [km³/s²]
-    pub mu: f32,
     /// Target epoch [seconds from reference]
     pub t_final: f32,
     /// Initial step size [seconds]
@@ -68,8 +82,61 @@ pub struct GpuIntegrationParams {
     pub atol_vel: f32,
     /// Maximum integration steps per GPU dispatch
     pub max_steps_per_dispatch: u32,
-    /// Padding for 16-byte alignment
-    pub _pad: [u32; 3],
+}
+
+impl GpuIntegrationParams {
+    /// Create integration parameters with required fields and sensible defaults.
+    ///
+    /// Defaults: h_min=1e-6, h_max=3600.0, rtol=1e-6, atol_pos=1e-3, atol_vel=1e-6,
+    /// max_steps_per_dispatch=10000.
+    pub fn new(t_final: f32, h_init: f32) -> Self {
+        Self {
+            t_final,
+            h_init,
+            h_min: 1e-6,
+            h_max: 3600.0,
+            rtol: 1e-6,
+            atol_pos: 1e-3,
+            atol_vel: 1e-6,
+            max_steps_per_dispatch: 10000,
+        }
+    }
+
+    /// Set minimum step size [seconds].
+    pub fn with_h_min(mut self, v: f32) -> Self {
+        self.h_min = v;
+        self
+    }
+
+    /// Set maximum step size [seconds].
+    pub fn with_h_max(mut self, v: f32) -> Self {
+        self.h_max = v;
+        self
+    }
+
+    /// Set relative tolerance.
+    pub fn with_rtol(mut self, v: f32) -> Self {
+        self.rtol = v;
+        self
+    }
+
+    /// Set absolute tolerance for position [km].
+    pub fn with_atol_pos(mut self, v: f32) -> Self {
+        self.atol_pos = v;
+        self
+    }
+
+    /// Set absolute tolerance for velocity [km/s].
+    pub fn with_atol_vel(mut self, v: f32) -> Self {
+        self.atol_vel = v;
+        self
+    }
+
+    /// Set maximum integration steps per GPU dispatch.
+    pub fn with_max_steps_per_dispatch(mut self, v: u32) -> Self {
+        self.max_steps_per_dispatch = v;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -98,19 +165,14 @@ mod tests {
     fn test_gpu_integration_params_size() {
         assert_eq!(
             std::mem::size_of::<GpuIntegrationParams>(),
-            48,
-            "GpuIntegrationParams must be 48 bytes for WGSL alignment"
+            32,
+            "GpuIntegrationParams must be 32 bytes for WGSL alignment"
         );
     }
 
     #[test]
     fn test_bytemuck_round_trip() {
-        let state = GpuState {
-            position: [6878.0, 0.0, 0.0],
-            velocity: [0.0, 7.613, 0.0],
-            epoch: 0.0,
-            _pad: 0.0,
-        };
+        let state = GpuState::new([6878.0, 0.0, 0.0], [0.0, 7.613, 0.0], 0.0);
 
         // Cast to bytes and back
         let bytes: &[u8] = bytemuck::bytes_of(&state);

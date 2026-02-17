@@ -5,9 +5,28 @@
 
 use rkf78::gpu::{GpuBatchPropagator, GpuIntegrationParams, GpuState};
 
+/// User-defined force model parameters (must be 16-byte aligned for WGSL uniform).
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct TwoBodyParams {
+    mu: f32,
+    _pad: [f32; 3],
+}
+
 /// Keplerian two-body force model in WGSL.
+///
+/// Declares its own ForceParams struct and reads from @group(0) @binding(4).
 const TWO_BODY_WGSL: &str = r#"
-fn compute_rhs(pos: vec3<f32>, vel: vec3<f32>, mu: f32) -> Deriv {
+struct ForceParams {
+    mu: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
+}
+@group(0) @binding(4) var<uniform> force_params: ForceParams;
+
+fn compute_rhs(pos: vec3<f32>, vel: vec3<f32>) -> Deriv {
+    let mu = force_params.mu;
     let r2 = dot(pos, pos);
     let r  = sqrt(r2);
     let r3 = r2 * r;
@@ -20,6 +39,7 @@ fn compute_rhs(pos: vec3<f32>, vel: vec3<f32>, mu: f32) -> Deriv {
 
 fn main() {
     let mu: f32 = 398600.4418;
+    let force_params = TwoBodyParams { mu, _pad: [0.0; 3] };
 
     // Create a batch of circular orbits at different altitudes
     let altitudes_km = [200.0_f32, 400.0, 600.0, 800.0, 1000.0];
@@ -30,12 +50,7 @@ fn main() {
         .map(|&alt| {
             let r = earth_radius + alt;
             let v = (mu / r).sqrt();
-            GpuState {
-                position: [r, 0.0, 0.0],
-                velocity: [0.0, v, 0.0],
-                epoch: 0.0,
-                _pad: 0.0,
-            }
+            GpuState::new([r, 0.0, 0.0], [0.0, v, 0.0], 0.0)
         })
         .collect();
 
@@ -43,18 +58,9 @@ fn main() {
     let r_ref = earth_radius + 400.0;
     let period = 2.0 * std::f32::consts::PI * (r_ref.powi(3) / mu).sqrt();
 
-    let params = GpuIntegrationParams {
-        mu,
-        t_final: period,
-        h_init: 60.0,
-        h_min: 1e-4,
-        h_max: 600.0,
-        rtol: 1e-6,
-        atol_pos: 1e-3,
-        atol_vel: 1e-6,
-        max_steps_per_dispatch: 10000,
-        _pad: [0; 3],
-    };
+    let params = GpuIntegrationParams::new(period, 60.0)
+        .with_h_min(1e-4)
+        .with_h_max(600.0);
 
     println!(
         "Propagating {} orbits on GPU for {:.1} s ...",
@@ -64,7 +70,7 @@ fn main() {
 
     let propagator = GpuBatchPropagator::new(TWO_BODY_WGSL).expect("GPU initialization failed");
     let (final_states, statuses) = propagator
-        .propagate_batch(&states, &params)
+        .propagate_batch(&states, &params, &force_params)
         .expect("GPU propagation failed");
 
     println!("\nResults:");

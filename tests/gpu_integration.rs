@@ -11,9 +11,31 @@ use rkf78::{IntegrationConfig, OdeSystem, Rkf78, Tolerances};
 /// Earth gravitational parameter [km³/s²]
 const MU: f64 = 398600.4418;
 
+/// User-defined force model parameters for two-body problem.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct TwoBodyParams {
+    mu: f32,
+    _pad: [f32; 3],
+}
+
+const FORCE_PARAMS: TwoBodyParams = TwoBodyParams {
+    mu: 398600.4418_f32,
+    _pad: [0.0; 3],
+};
+
 /// Keplerian two-body force model for the GPU shader.
 const TWO_BODY_WGSL: &str = r#"
-fn compute_rhs(pos: vec3<f32>, vel: vec3<f32>, mu: f32) -> Deriv {
+struct ForceParams {
+    mu: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
+}
+@group(0) @binding(4) var<uniform> force_params: ForceParams;
+
+fn compute_rhs(pos: vec3<f32>, vel: vec3<f32>) -> Deriv {
+    let mu = force_params.mu;
     let r2 = dot(pos, pos);
     let r  = sqrt(r2);
     let r3 = r2 * r;
@@ -28,12 +50,7 @@ fn compute_rhs(pos: vec3<f32>, vel: vec3<f32>, mu: f32) -> Deriv {
 fn circular_orbit_state(r: f32) -> GpuState {
     let mu_f32 = MU as f32;
     let v = (mu_f32 / r).sqrt();
-    GpuState {
-        position: [r, 0.0, 0.0],
-        velocity: [0.0, v, 0.0],
-        epoch: 0.0,
-        _pad: 0.0,
-    }
+    GpuState::new([r, 0.0, 0.0], [0.0, v, 0.0], 0.0)
 }
 
 /// CPU two-body system for reference integration.
@@ -57,18 +74,9 @@ impl OdeSystem<f64, 6> for TwoBody {
 
 /// Default integration params for a circular LEO orbit (one period).
 fn leo_params(t_final: f32) -> GpuIntegrationParams {
-    GpuIntegrationParams {
-        mu: MU as f32,
-        t_final,
-        h_init: 60.0,
-        h_min: 1e-4,
-        h_max: 600.0,
-        rtol: 1e-6,
-        atol_pos: 1e-3,
-        atol_vel: 1e-6,
-        max_steps_per_dispatch: 10000,
-        _pad: [0; 3],
-    }
+    GpuIntegrationParams::new(t_final, 60.0)
+        .with_h_min(1e-4)
+        .with_h_max(600.0)
 }
 
 /// Compute orbital period for circular orbit at radius r [km].
@@ -87,7 +95,9 @@ fn test_circular_orbit_gpu_vs_cpu() {
     let propagator = GpuBatchPropagator::new(TWO_BODY_WGSL).unwrap();
     let state = circular_orbit_state(r0 as f32);
     let params = leo_params(period);
-    let (gpu_states, gpu_statuses) = propagator.propagate_batch(&[state], &params).unwrap();
+    let (gpu_states, gpu_statuses) = propagator
+        .propagate_batch(&[state], &params, &FORCE_PARAMS)
+        .unwrap();
 
     assert_eq!(gpu_statuses[0].status, 1, "GPU trajectory should complete");
 
@@ -134,7 +144,9 @@ fn test_batch_independence() {
 
     // Propagate 100 identical states
     let states: Vec<GpuState> = vec![state; 100];
-    let (gpu_states, gpu_statuses) = propagator.propagate_batch(&states, &params).unwrap();
+    let (gpu_states, gpu_statuses) = propagator
+        .propagate_batch(&states, &params, &FORCE_PARAMS)
+        .unwrap();
 
     // All should complete
     for (i, s) in gpu_statuses.iter().enumerate() {
@@ -181,7 +193,9 @@ fn test_energy_conservation_gpu() {
     };
 
     let e0 = compute_energy(&state);
-    let (gpu_states, _) = propagator.propagate_batch(&[state], &params).unwrap();
+    let (gpu_states, _) = propagator
+        .propagate_batch(&[state], &params, &FORCE_PARAMS)
+        .unwrap();
     let e_final = compute_energy(&gpu_states[0]);
 
     let rel_err = ((e_final - e0) / e0).abs();
@@ -210,14 +224,11 @@ fn test_elliptical_orbit_gpu_vs_cpu() {
 
     // GPU
     let propagator = GpuBatchPropagator::new(TWO_BODY_WGSL).unwrap();
-    let gpu_state = GpuState {
-        position: [rp as f32, 0.0, 0.0],
-        velocity: [0.0, v_peri as f32, 0.0],
-        epoch: 0.0,
-        _pad: 0.0,
-    };
+    let gpu_state = GpuState::new([rp as f32, 0.0, 0.0], [0.0, v_peri as f32, 0.0], 0.0);
     let params = leo_params(period as f32);
-    let (gpu_states, gpu_statuses) = propagator.propagate_batch(&[gpu_state], &params).unwrap();
+    let (gpu_states, gpu_statuses) = propagator
+        .propagate_batch(&[gpu_state], &params, &FORCE_PARAMS)
+        .unwrap();
 
     assert_eq!(gpu_statuses[0].status, 1, "GPU trajectory should complete");
 
@@ -259,10 +270,13 @@ fn test_step_rejection_gpu() {
     let state = circular_orbit_state(r0);
 
     // Use a very large initial step size to force rejections
-    let mut params = leo_params(period);
-    params.h_init = 5000.0; // much larger than orbital period / 10
+    let params = GpuIntegrationParams::new(period, 5000.0)
+        .with_h_min(1e-4)
+        .with_h_max(600.0);
 
-    let (_, gpu_statuses) = propagator.propagate_batch(&[state], &params).unwrap();
+    let (_, gpu_statuses) = propagator
+        .propagate_batch(&[state], &params, &FORCE_PARAMS)
+        .unwrap();
 
     assert_eq!(gpu_statuses[0].status, 1, "Should still complete");
     assert!(
@@ -287,10 +301,14 @@ fn test_multi_dispatch_completion() {
     let state = circular_orbit_state(r0);
 
     // Use very small max_steps_per_dispatch to force multiple dispatches
-    let mut params = leo_params(period);
-    params.max_steps_per_dispatch = 10;
+    let params = GpuIntegrationParams::new(period, 60.0)
+        .with_h_min(1e-4)
+        .with_h_max(600.0)
+        .with_max_steps_per_dispatch(10);
 
-    let (gpu_states, gpu_statuses) = propagator.propagate_batch(&[state], &params).unwrap();
+    let (gpu_states, gpu_statuses) = propagator
+        .propagate_batch(&[state], &params, &FORCE_PARAMS)
+        .unwrap();
 
     assert_eq!(
         gpu_statuses[0].status, 1,

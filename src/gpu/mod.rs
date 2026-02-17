@@ -9,8 +9,13 @@
 //! function with this signature:
 //!
 //! ```wgsl
-//! fn compute_rhs(pos: vec3<f32>, vel: vec3<f32>, mu: f32) -> Deriv
+//! fn compute_rhs(pos: vec3<f32>, vel: vec3<f32>) -> Deriv
 //! ```
+//!
+//! Force model parameters (e.g., gravitational parameter, J2 coefficients)
+//! are passed as a user-defined `#[repr(C)]` struct via the `force_params`
+//! argument to [`GpuBatchPropagator::propagate_batch()`]. In your WGSL,
+//! declare these at `@group(0) @binding(4)`.
 //!
 //! See `examples/gpu_two_body.rs` for a Keplerian two-body implementation.
 //!
@@ -54,11 +59,16 @@ impl std::error::Error for GpuError {}
 /// propagating batches of trajectories on the GPU.
 ///
 /// The force model is user-supplied as a WGSL string containing a
-/// `compute_rhs` function. Example (Keplerian two-body):
+/// `compute_rhs` function. Force model parameters are declared by the user
+/// at `@group(0) @binding(4)`. Example (Keplerian two-body):
 ///
 /// ```ignore
 /// let two_body_wgsl = r#"
-/// fn compute_rhs(pos: vec3<f32>, vel: vec3<f32>, mu: f32) -> Deriv {
+/// struct ForceParams { mu: f32, _pad0: f32, _pad1: f32, _pad2: f32 }
+/// @group(0) @binding(4) var<uniform> force_params: ForceParams;
+///
+/// fn compute_rhs(pos: vec3<f32>, vel: vec3<f32>) -> Deriv {
+///     let mu = force_params.mu;
 ///     let r2 = dot(pos, pos);
 ///     let r  = sqrt(r2);
 ///     let r3 = r2 * r;
@@ -78,7 +88,8 @@ impl GpuBatchPropagator {
     /// Create a new GPU batch propagator with a user-supplied force model.
     ///
     /// # Arguments
-    /// * `force_model_wgsl` — WGSL source defining `fn compute_rhs(pos: vec3<f32>, vel: vec3<f32>, mu: f32) -> Deriv`
+    /// * `force_model_wgsl` — WGSL source defining `fn compute_rhs(pos: vec3<f32>, vel: vec3<f32>) -> Deriv`
+    ///   and a force params struct at `@group(0) @binding(4)`
     ///
     /// # Errors
     /// Returns `GpuError::AdapterNotFound` if no suitable GPU is available,
@@ -98,17 +109,29 @@ impl GpuBatchPropagator {
     /// # Arguments
     /// * `initial_states` — Starting state for each trajectory
     /// * `params` — Integration parameters (uniform across the batch)
+    /// * `force_params` — User-defined force model parameters (`#[repr(C)]`, `Pod`).
+    ///   Must be 16-byte aligned (size must be a multiple of 16). This is bound
+    ///   at `@group(0) @binding(4)` in the WGSL shader.
     ///
     /// # Returns
     /// `(final_states, statuses)` — one entry per trajectory
     ///
     /// # Errors
     /// Returns `GpuError::ReadbackFailed` if GPU buffer readback fails.
-    pub fn propagate_batch(
+    ///
+    /// # Panics
+    /// Panics if `size_of::<P>()` is not a multiple of 16 (WGSL uniform alignment).
+    pub fn propagate_batch<P: bytemuck::Pod>(
         &self,
         initial_states: &[GpuState],
         params: &GpuIntegrationParams,
+        force_params: &P,
     ) -> Result<(Vec<GpuState>, Vec<TrajectoryStatus>), GpuError> {
+        assert!(
+            std::mem::size_of::<P>().is_multiple_of(16),
+            "Force params struct must be 16-byte aligned for WGSL uniform buffer (size {} is not a multiple of 16)",
+            std::mem::size_of::<P>()
+        );
         let n = initial_states.len();
         let device = &self.pipeline.device;
         let queue = &self.pipeline.queue;
@@ -139,6 +162,12 @@ impl GpuBatchPropagator {
             usage: wgpu::BufferUsages::UNIFORM,
         });
 
+        let force_params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Force Params"),
+            contents: bytemuck::bytes_of(force_params),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
         // Create bind group
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("RKF78 Bind Group"),
@@ -159,6 +188,10 @@ impl GpuBatchPropagator {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: force_params_buffer.as_entire_binding(),
                 },
             ],
         });
