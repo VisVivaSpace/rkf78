@@ -75,7 +75,7 @@ fn main() {
     let mut solver = Rkf78::new(tol);
 
     // Integrate for 1.5 periods to guarantee we cross periapsis
-    let result = solver
+    let (result, _) = solver
         .integrate_to_event(
             &sys,
             &event,
@@ -112,7 +112,7 @@ fn main() {
     };
 
     let mut solver2 = Rkf78::new(Tolerances::new(1e-12, 1e-12));
-    let _ = solver2
+    let (_, collected) = solver2
         .integrate_to_event(
             &sys,
             &event,
@@ -123,11 +123,8 @@ fn main() {
         .unwrap();
 
     println!("Part 2: EventAction::Continue (5 orbits)");
-    println!(
-        "  Found {} periapsis crossings:",
-        solver2.collected_events.len()
-    );
-    for (i, ev) in solver2.collected_events.iter().enumerate() {
+    println!("  Found {} periapsis crossings:", collected.len());
+    for (i, ev) in collected.iter().enumerate() {
         let r = (ev.y[0] * ev.y[0] + ev.y[1] * ev.y[1] + ev.y[2] * ev.y[2]).sqrt();
         println!(
             "    #{}: t = {:10.3} s  r = {:.6} km  err = {:.2e} km",

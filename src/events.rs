@@ -111,8 +111,31 @@ pub struct EventResult<T: Scalar, const N: usize> {
     pub y: [T; N],
     /// Value of the event function at the event (should be ~0)
     pub g_value: T::Real,
+    /// Index of the event that fired (0 for single-event methods)
+    pub event_index: usize,
     /// Number of root-finding iterations used
     pub iterations: usize,
+}
+
+/// Multiple simultaneous event functions.
+///
+/// Implement this trait to monitor M event functions simultaneously.
+/// The integrator will detect the earliest zero crossing across all M events.
+///
+/// # Type Parameters
+/// * `T` - Scalar type for state components
+/// * `N` - Dimension of the state vector
+/// * `M` - Number of event functions
+pub trait MultiEventFunction<T: Scalar, const N: usize, const M: usize> {
+    /// Evaluate all M event functions at once.
+    ///
+    /// # Arguments
+    /// * `t` - Current time
+    /// * `y` - Current state vector
+    ///
+    /// # Returns
+    /// Array of M event function values (all real).
+    fn eval(&self, t: T::Real, y: &[T; N]) -> [T::Real; M];
 }
 
 /// Brent's method for root finding

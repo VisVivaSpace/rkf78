@@ -277,9 +277,6 @@ pub struct Rkf78<T: Scalar, const N: usize> {
     k: [[T; N]; STAGES],
     /// Integration statistics
     pub stats: Stats,
-    /// Events collected during `integrate_to_event` with `EventAction::Continue`.
-    /// Cleared at the start of each `integrate_to_event` call.
-    pub collected_events: Vec<EventResult<T, N>>,
 }
 
 impl<T: Scalar, const N: usize> Rkf78<T, N> {
@@ -290,7 +287,6 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
             controller: StepController::default(),
             k: [[T::ZERO; N]; STAGES],
             stats: Stats::default(),
-            collected_events: Vec::new(),
         }
     }
 
@@ -654,28 +650,21 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
         Ok(())
     }
 
-    /// Integrate until an event occurs or the final time is reached.
+    /// Integrate with a single event function.
     ///
-    /// This method monitors an event function `g(t, y)` during integration.
-    /// When `g` changes sign (crosses zero), Brent's method is used to
-    /// precisely locate the time of the event.
+    /// Monitors event function `g(t, y)` during integration. When `g` changes
+    /// sign, Brent's method locates the precise crossing time.
     ///
     /// **Note:** The event state is found via Hermite cubic interpolation
     /// between integration steps, giving O(h^4) accuracy in the event state.
-    /// The event *time* is located to `root_tol` precision by Brent's method.
-    ///
-    /// # Arguments
-    /// * `sys` - The ODE system to integrate
-    /// * `event` - The event function to monitor
-    /// * `event_config` - Configuration for event detection
-    /// * `config` - Integration configuration (time span, step size, limits)
-    /// * `y0` - Initial state
     ///
     /// # Returns
-    /// * `Ok(IntegrationResult::Event(event_result))` - Event was detected
-    /// * `Ok(IntegrationResult::Completed(t, y))` - Reached tf without event
-    /// * `Err(IntegrationError)` - Integration failed
+    /// * `Ok((IntegrationResult, collected_events))` — The first element is
+    ///   either `Event(...)` (if a `Stop` event fired) or `Completed { t, y }`.
+    ///   The second element contains all `Continue`-action events recorded
+    ///   during integration (empty if no `Continue` events occurred).
     #[must_use = "integration result contains the final state or event"]
+    #[allow(clippy::type_complexity)]
     pub fn integrate_to_event<S, E>(
         &mut self,
         sys: &S,
@@ -683,24 +672,27 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
         event_config: &EventConfig<T::Real>,
         config: &IntegrationConfig<T::Real>,
         y0: &[T; N],
-    ) -> Result<IntegrationResult<T, N>, IntegrationError<T::Real>>
+    ) -> Result<(IntegrationResult<T, N>, Vec<EventResult<T, N>>), IntegrationError<T::Real>>
     where
         S: OdeSystem<T, N>,
         E: EventFunction<T, N>,
     {
         if config.t0 == config.tf {
-            return Ok(IntegrationResult::Completed {
-                t: config.t0,
-                y: *y0,
-            });
+            return Ok((
+                IntegrationResult::Completed {
+                    t: config.t0,
+                    y: *y0,
+                },
+                Vec::new(),
+            ));
         }
         self.validate_inputs(config, y0)?;
-        self.collected_events.clear();
 
         let mut t = config.t0;
         let mut y = *y0;
         let direction = (config.tf - config.t0).signum();
         let mut h = config.h0.clamp(config.h_min, config.h_max) * direction;
+        let mut collected = Vec::new();
 
         // Evaluate initial event function
         let mut g_prev = event.eval(t, &y);
@@ -708,7 +700,6 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
         let mut step_count = 0u64;
 
         while (config.tf - t) * direction > config.h_min {
-            // Don't overshoot the endpoint
             if (t + h - config.tf) * direction > T::Real::ZERO {
                 h = config.tf - t;
             }
@@ -716,32 +707,40 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
             let result = self.step(sys, t, &y, h);
 
             if result.accepted {
-                // Evaluate event function at new state
                 let g_new = event.eval(result.t, &result.y);
 
-                // Check for sign change
                 if sign_change_detected(g_prev, g_new, event_config.direction) {
-                    // Event detected! Use Brent's method to find precise time
-                    let event_result = self.find_event_root(
-                        sys,
-                        event,
-                        t,
-                        &y,
-                        result.t,
-                        &result.y,
+                    // Compute Hermite data for root-finding
+                    let mut f_a = [T::ZERO; N];
+                    let mut f_b = [T::ZERO; N];
+                    sys.rhs(t, &y, &mut f_a);
+                    sys.rhs(result.t, &result.y, &mut f_b);
+                    self.stats.fn_evals += 2;
+
+                    let (t_a, y_a, t_b, y_b) = (t, y, result.t, result.y);
+                    let event_result = Self::find_root_brent(
+                        t_a,
+                        t_b,
+                        &y_a,
+                        &y_b,
+                        &f_a,
+                        &f_b,
                         g_prev,
                         g_new,
+                        0,
                         event_config,
+                        |ti| {
+                            let yi = hermite_interp(t_a, t_b, &y_a, &y_b, &f_a, &f_b, ti);
+                            event.eval(ti, &yi)
+                        },
                     )?;
 
                     match event_config.action {
                         EventAction::Stop => {
-                            return Ok(IntegrationResult::Event(event_result));
+                            return Ok((IntegrationResult::Event(event_result), collected));
                         }
                         EventAction::Continue => {
-                            // Record event, accept the full step (not the event point)
-                            // so we move past the zero crossing and don't re-detect it
-                            self.collected_events.push(event_result);
+                            collected.push(event_result);
                             t = result.t;
                             y = result.y;
                             g_prev = g_new;
@@ -751,7 +750,6 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
                     }
                 }
 
-                // Update state
                 t = result.t;
                 y = result.y;
                 if !y.iter().all(|v| v.norm().is_finite()) {
@@ -778,75 +776,206 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
             }
         }
 
-        // Reached tf without event
-        Ok(IntegrationResult::Completed { t, y })
+        Ok((IntegrationResult::Completed { t, y }, collected))
     }
 
-    /// Find the precise root location using Brent's method.
+    /// Integrate with M simultaneous event functions.
     ///
-    /// The event state is interpolated via Hermite cubic using the RHS
-    /// evaluations at the step endpoints, giving O(h^4) state accuracy.
-    #[allow(clippy::too_many_arguments)]
-    fn find_event_root<S, E>(
+    /// Monitors M event functions simultaneously. When any event changes sign,
+    /// Brent's method locates each crossing independently, and the earliest
+    /// one is processed. Each event has its own [`EventConfig`].
+    ///
+    /// # Returns
+    /// * `Ok((IntegrationResult, collected_events))` — same as
+    ///   [`integrate_to_event`](Self::integrate_to_event), with
+    ///   [`EventResult::event_index`] identifying which event fired.
+    #[must_use = "integration result contains the final state or event"]
+    #[allow(clippy::type_complexity)]
+    pub fn integrate_with_multi_events<S, E, const M: usize>(
         &mut self,
         sys: &S,
-        event: &E,
-        t_a: T::Real,
-        y_a: &[T; N],
-        t_b: T::Real,
-        y_b: &[T; N],
-        g_a: T::Real,
-        g_b: T::Real,
-        config: &EventConfig<T::Real>,
-    ) -> Result<EventResult<T, N>, IntegrationError<T::Real>>
+        events: &E,
+        event_configs: &[EventConfig<T::Real>; M],
+        config: &IntegrationConfig<T::Real>,
+        y0: &[T; N],
+    ) -> Result<(IntegrationResult<T, N>, Vec<EventResult<T, N>>), IntegrationError<T::Real>>
     where
         S: OdeSystem<T, N>,
-        E: EventFunction<T, N>,
+        E: crate::events::MultiEventFunction<T, N, M>,
     {
-        let solver = BrentSolver::new(config.root_tol, config.max_iter);
+        if config.t0 == config.tf {
+            return Ok((
+                IntegrationResult::Completed {
+                    t: config.t0,
+                    y: *y0,
+                },
+                Vec::new(),
+            ));
+        }
+        self.validate_inputs(config, y0)?;
 
-        // Compute RHS at both endpoints for Hermite cubic interpolation.
-        // Cost: 2 RHS evaluations per event (not per step).
-        let mut f_a = [T::ZERO; N];
-        let mut f_b = [T::ZERO; N];
-        sys.rhs(t_a, y_a, &mut f_a);
-        sys.rhs(t_b, y_b, &mut f_b);
-        self.stats.fn_evals += 2;
+        let mut t = config.t0;
+        let mut y = *y0;
+        let direction = (config.tf - config.t0).signum();
+        let mut h = config.h0.clamp(config.h_min, config.h_max) * direction;
+        let mut collected = Vec::new();
 
-        // Create a function that evaluates g at time t using Hermite interpolation
-        let eval_g = |t: T::Real| {
-            let y_interp = hermite_interp(t_a, t_b, y_a, y_b, &f_a, &f_b, t);
-            event.eval(t, &y_interp)
-        };
+        let mut g_prev = events.eval(t, &y);
 
-        // Find the root
-        match solver.find_root(eval_g, t_a, t_b, Some(g_a), Some(g_b)) {
+        let mut step_count = 0u64;
+
+        while (config.tf - t) * direction > config.h_min {
+            if (t + h - config.tf) * direction > T::Real::ZERO {
+                h = config.tf - t;
+            }
+
+            let result = self.step(sys, t, &y, h);
+
+            if result.accepted {
+                let g_new = events.eval(result.t, &result.y);
+
+                // Check all M events for sign changes, find earliest root
+                let mut earliest: Option<EventResult<T, N>> = None;
+                let mut earliest_action = EventAction::Stop;
+                let mut needs_hermite = false;
+
+                for m in 0..M {
+                    if sign_change_detected(g_prev[m], g_new[m], event_configs[m].direction) {
+                        needs_hermite = true;
+                        break;
+                    }
+                }
+
+                if needs_hermite {
+                    let mut f_a = [T::ZERO; N];
+                    let mut f_b = [T::ZERO; N];
+                    sys.rhs(t, &y, &mut f_a);
+                    sys.rhs(result.t, &result.y, &mut f_b);
+                    self.stats.fn_evals += 2;
+
+                    let (t_a, y_a, t_b, y_b) = (t, y, result.t, result.y);
+
+                    for m in 0..M {
+                        if !sign_change_detected(g_prev[m], g_new[m], event_configs[m].direction) {
+                            continue;
+                        }
+
+                        let ev = Self::find_root_brent(
+                            t_a,
+                            t_b,
+                            &y_a,
+                            &y_b,
+                            &f_a,
+                            &f_b,
+                            g_prev[m],
+                            g_new[m],
+                            m,
+                            &event_configs[m],
+                            |ti| {
+                                let yi = hermite_interp(t_a, t_b, &y_a, &y_b, &f_a, &f_b, ti);
+                                events.eval(ti, &yi)[m]
+                            },
+                        )?;
+
+                        let is_earlier = match &earliest {
+                            None => true,
+                            Some(prev) => (ev.t - t_a) * direction < (prev.t - t_a) * direction,
+                        };
+                        if is_earlier {
+                            earliest_action = event_configs[m].action;
+                            earliest = Some(ev);
+                        }
+                    }
+                }
+
+                if let Some(ev) = earliest {
+                    match earliest_action {
+                        EventAction::Stop => {
+                            return Ok((IntegrationResult::Event(ev), collected));
+                        }
+                        EventAction::Continue => {
+                            collected.push(ev);
+                            t = result.t;
+                            y = result.y;
+                            g_prev = g_new;
+                            h = result.h_next.clamp(config.h_min, config.h_max) * direction;
+                            continue;
+                        }
+                    }
+                }
+
+                t = result.t;
+                y = result.y;
+                if !y.iter().all(|v| v.norm().is_finite()) {
+                    return Err(IntegrationError::NonFiniteState { t });
+                }
+                g_prev = g_new;
+            }
+
+            h = result.h_next.clamp(config.h_min, config.h_max) * direction;
+
+            step_count += 1;
+            if step_count > config.max_steps {
+                return Err(IntegrationError::MaxStepsExceeded);
+            }
+
+            if !result.accepted
+                && result.h_next <= config.h_min
+                && (config.tf - t) * direction > config.h_min
+            {
+                return Err(IntegrationError::StepSizeTooSmall {
+                    t,
+                    h: result.h_next,
+                });
+            }
+        }
+
+        Ok((IntegrationResult::Completed { t, y }, collected))
+    }
+
+    /// Find the precise root of a scalar function using Brent's method
+    /// with Hermite interpolation for the state.
+    #[allow(clippy::too_many_arguments)]
+    fn find_root_brent(
+        t_a: T::Real,
+        t_b: T::Real,
+        y_a: &[T; N],
+        y_b: &[T; N],
+        f_a: &[T; N],
+        f_b: &[T; N],
+        g_a: T::Real,
+        g_b: T::Real,
+        event_index: usize,
+        config: &EventConfig<T::Real>,
+        mut eval_g: impl FnMut(T::Real) -> T::Real,
+    ) -> Result<EventResult<T, N>, IntegrationError<T::Real>> {
+        let brent = BrentSolver::new(config.root_tol, config.max_iter);
+
+        match brent.find_root(&mut eval_g, t_a, t_b, Some(g_a), Some(g_b)) {
             Ok((t_event, g_value, iterations)) => {
-                let y_event = hermite_interp(t_a, t_b, y_a, y_b, &f_a, &f_b, t_event);
+                let y_event = hermite_interp(t_a, t_b, y_a, y_b, f_a, f_b, t_event);
                 Ok(EventResult {
                     t: t_event,
                     y: y_event,
                     g_value,
+                    event_index,
                     iterations,
                 })
             }
-            Err(BrentError::NotBracketed { .. }) => {
-                // This shouldn't happen since we already detected a sign change
-                Err(IntegrationError::EventFindingFailed {
-                    message: "Root not bracketed despite sign change detection".to_string(),
-                })
-            }
+            Err(BrentError::NotBracketed { .. }) => Err(IntegrationError::EventFindingFailed {
+                message: "Root not bracketed despite sign change detection".to_string(),
+            }),
             Err(BrentError::MaxIterations {
                 current_best,
                 f_value,
                 iterations,
             }) => {
-                // Return best estimate even if not fully converged
-                let y_event = hermite_interp(t_a, t_b, y_a, y_b, &f_a, &f_b, current_best);
+                let y_event = hermite_interp(t_a, t_b, y_a, y_b, f_a, f_b, current_best);
                 Ok(EventResult {
                     t: current_best,
                     y: y_event,
                     g_value: f_value,
+                    event_index,
                     iterations,
                 })
             }
@@ -1194,7 +1323,7 @@ mod tests {
         let mut solver = Rkf78::new(tol);
 
         let y0 = [1.0];
-        let result = solver
+        let (result, _) = solver
             .integrate_to_event(
                 &sys,
                 &event,
@@ -1290,7 +1419,7 @@ mod tests {
         let tol = Tolerances::new(1e-10, 1e-12);
         let mut solver = Rkf78::new(tol);
 
-        let result = solver
+        let (result, _) = solver
             .integrate_to_event(
                 &sys,
                 &event,
@@ -1351,7 +1480,7 @@ mod tests {
         let mut solver = Rkf78::new(tol);
 
         let y0 = [0.0];
-        let result = solver
+        let (result, _) = solver
             .integrate_to_event(
                 &LinearODE,
                 &event,
@@ -1692,7 +1821,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = solver
+        let (result, _) = solver
             .integrate_to_event(
                 &LinearGrowth,
                 &ZeroCrossing,
@@ -1737,7 +1866,7 @@ mod tests {
         let tol = Tolerances::new(1e-12, 1e-12);
         let mut solver = Rkf78::new(tol);
 
-        let result = solver
+        let (result, _) = solver
             .integrate_to_event(
                 &LinearGrowth,
                 &event,
@@ -1790,7 +1919,7 @@ mod tests {
         let tol = Tolerances::new(1e-12, 1e-12);
         let mut solver = Rkf78::new(tol);
 
-        let result = solver
+        let (result, collected) = solver
             .integrate_to_event(
                 &LinearODE,
                 &ZeroCross,
@@ -1817,12 +1946,12 @@ mod tests {
 
         // Should have collected exactly 1 event
         assert_eq!(
-            solver.collected_events.len(),
+            collected.len(),
             1,
             "Expected 1 collected event, got {}",
-            solver.collected_events.len()
+            collected.len()
         );
-        let ev = &solver.collected_events[0];
+        let ev = &collected[0];
         assert!(
             (ev.t - 1.0).abs() < 0.01,
             "Event time {} should be near 1.0",
@@ -2125,7 +2254,7 @@ mod tests {
         let mut solver = Rkf78::new(tol);
 
         let tf = 4.0 * std::f64::consts::PI;
-        let result = solver
+        let (result, collected) = solver
             .integrate_to_event(
                 &sys,
                 &PositionZero,
@@ -2147,17 +2276,17 @@ mod tests {
 
         // cos(t) = 0 at t = pi/2, 3pi/2, 5pi/2, 7pi/2 -> 4 crossings in [0, 4pi]
         assert!(
-            solver.collected_events.len() >= 4,
+            collected.len() >= 4,
             "Expected at least 4 zero-crossings, got {}",
-            solver.collected_events.len()
+            collected.len()
         );
 
         // Verify the first few event times are near the expected zeros
         let pi = std::f64::consts::PI;
         let expected_times = [pi / 2.0, 3.0 * pi / 2.0, 5.0 * pi / 2.0, 7.0 * pi / 2.0];
         for (i, expected_t) in expected_times.iter().enumerate() {
-            if i < solver.collected_events.len() {
-                let actual_t = solver.collected_events[i].t;
+            if i < collected.len() {
+                let actual_t = collected[i].t;
                 assert!(
                     (actual_t - expected_t).abs() < 0.05,
                     "Event {} at t={:.4}, expected {:.4}",
@@ -2337,5 +2466,206 @@ mod tests {
 
         assert_eq!(t1, t2);
         assert_eq!(y1, y2);
+    }
+
+    // ─── Multi-event tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_multi_event_earliest_wins() {
+        // Harmonic oscillator: y = cos(t), y' = -sin(t)
+        // Event 0: y[0] = 0 (cos(t) = 0 at t = pi/2)
+        // Event 1: y[0] = 0.5 (cos(t) = 0.5 at t = pi/3)
+        // Event 1 should fire first (pi/3 < pi/2)
+        use crate::events::MultiEventFunction;
+
+        struct TwoThresholds;
+
+        impl MultiEventFunction<f64, 2, 2> for TwoThresholds {
+            fn eval(&self, _t: f64, y: &[f64; 2]) -> [f64; 2] {
+                [y[0], y[0] - 0.5] // event 0: y=0, event 1: y=0.5
+            }
+        }
+
+        let sys = HarmonicOscillator { omega: 1.0 };
+        let y0 = [1.0, 0.0];
+        let tf = 2.0;
+
+        // Both events are Falling (cos decreasing from 1.0)
+        let configs = [
+            EventConfig {
+                direction: EventDirection::Falling,
+                action: EventAction::Stop,
+                ..Default::default()
+            },
+            EventConfig {
+                direction: EventDirection::Falling,
+                action: EventAction::Stop,
+                ..Default::default()
+            },
+        ];
+
+        let tol = Tolerances::new(1e-12, 1e-12);
+        let mut solver = Rkf78::new(tol);
+
+        let (result, _) = solver
+            .integrate_with_multi_events(
+                &sys,
+                &TwoThresholds,
+                &configs,
+                &IntegrationConfig::new(0.0, tf, 0.1),
+                &y0,
+            )
+            .unwrap();
+
+        match result {
+            IntegrationResult::Event(ev) => {
+                // Event 1 (y=0.5) should fire first at t = pi/3
+                assert_eq!(ev.event_index, 1, "Event 1 should fire first");
+                let expected_t = std::f64::consts::PI / 3.0;
+                assert!(
+                    (ev.t - expected_t).abs() < 0.01,
+                    "Event time {:.6} should be near pi/3 = {:.6}",
+                    ev.t,
+                    expected_t
+                );
+            }
+            IntegrationResult::Completed { .. } => {
+                panic!("Should have detected an event");
+            }
+        }
+    }
+
+    #[test]
+    fn test_multi_event_continue_collects() {
+        // Use 2 events on harmonic oscillator, both Continue.
+        // Event 0: y[0] crosses zero (Falling) — cos(t) = 0 at pi/2
+        // Event 1: y[1] crosses zero (Falling) — -sin(t) = 0 at pi
+        use crate::events::MultiEventFunction;
+
+        struct TwoEvents;
+
+        impl MultiEventFunction<f64, 2, 2> for TwoEvents {
+            fn eval(&self, _t: f64, y: &[f64; 2]) -> [f64; 2] {
+                [y[0], y[1]] // position zero, velocity zero
+            }
+        }
+
+        let sys = HarmonicOscillator { omega: 1.0 };
+        let y0 = [1.0, 0.0];
+        let tf = 2.0 * std::f64::consts::PI;
+
+        let configs = [
+            EventConfig {
+                direction: EventDirection::Any,
+                action: EventAction::Continue,
+                ..Default::default()
+            },
+            EventConfig {
+                direction: EventDirection::Any,
+                action: EventAction::Continue,
+                ..Default::default()
+            },
+        ];
+
+        let tol = Tolerances::new(1e-12, 1e-12);
+        let mut solver = Rkf78::new(tol);
+
+        let (result, collected) = solver
+            .integrate_with_multi_events(
+                &sys,
+                &TwoEvents,
+                &configs,
+                &IntegrationConfig::new(0.0, tf, 0.1),
+                &y0,
+            )
+            .unwrap();
+
+        // Should complete (all events are Continue)
+        assert!(
+            matches!(result, IntegrationResult::Completed { .. }),
+            "Should complete, not stop at event"
+        );
+
+        // Over one full period, each event should cross zero multiple times
+        assert!(
+            collected.len() >= 4,
+            "Expected at least 4 collected events, got {}",
+            collected.len()
+        );
+
+        // Verify event_index is set correctly (should see both 0 and 1)
+        let has_event_0 = collected.iter().any(|e| e.event_index == 0);
+        let has_event_1 = collected.iter().any(|e| e.event_index == 1);
+        assert!(has_event_0, "Should have events from event function 0");
+        assert!(has_event_1, "Should have events from event function 1");
+    }
+
+    #[test]
+    fn test_multi_event_single_matches_single_api() {
+        // A single-event MultiEventFunction should produce the same result
+        // as the single-event integrate_to_event API.
+        use crate::events::MultiEventFunction;
+
+        struct SingleWrapper;
+
+        impl MultiEventFunction<f64, 2, 1> for SingleWrapper {
+            fn eval(&self, _t: f64, y: &[f64; 2]) -> [f64; 1] {
+                [y[0]] // position zero crossing
+            }
+        }
+
+        struct PositionZero;
+        impl EventFunction<f64, 2> for PositionZero {
+            fn eval(&self, _t: f64, y: &[f64; 2]) -> f64 {
+                y[0]
+            }
+        }
+
+        let sys = HarmonicOscillator { omega: 1.0 };
+        let y0 = [1.0, 0.0];
+        let tf = 2.0;
+        let event_config = EventConfig {
+            direction: EventDirection::Falling,
+            action: EventAction::Stop,
+            ..Default::default()
+        };
+
+        // Single-event API
+        let mut solver1 = Rkf78::new(Tolerances::new(1e-12, 1e-12));
+        let (result1, _) = solver1
+            .integrate_to_event(
+                &sys,
+                &PositionZero,
+                &event_config,
+                &IntegrationConfig::new(0.0, tf, 0.1),
+                &y0,
+            )
+            .unwrap();
+
+        // Multi-event API with M=1
+        let mut solver2 = Rkf78::new(Tolerances::new(1e-12, 1e-12));
+        let (result2, _) = solver2
+            .integrate_with_multi_events(
+                &sys,
+                &SingleWrapper,
+                &[event_config],
+                &IntegrationConfig::new(0.0, tf, 0.1),
+                &y0,
+            )
+            .unwrap();
+
+        // Both should find the same event
+        match (result1, result2) {
+            (IntegrationResult::Event(ev1), IntegrationResult::Event(ev2)) => {
+                assert!(
+                    (ev1.t - ev2.t).abs() < 1e-10,
+                    "Single ({:.10}) and multi ({:.10}) event times should match",
+                    ev1.t,
+                    ev2.t
+                );
+                assert_eq!(ev2.event_index, 0);
+            }
+            _ => panic!("Both should detect an event"),
+        }
     }
 }

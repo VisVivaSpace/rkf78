@@ -136,7 +136,9 @@ pub mod scalar;
 pub mod solution;
 pub mod solver;
 
-pub use events::{EventAction, EventConfig, EventDirection, EventFunction, EventResult};
+pub use events::{
+    EventAction, EventConfig, EventDirection, EventFunction, EventResult, MultiEventFunction,
+};
 pub use scalar::{Float, Scalar};
 pub use solution::Solution;
 pub use solver::{
