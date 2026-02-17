@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use rkf78::{OdeSystem, Rkf78, Tolerances};
+use rkf78::{IntegrationConfig, OdeSystem, Rkf78, Tolerances};
 
 /// Two-body problem (6-state)
 struct TwoBody {
@@ -46,7 +46,11 @@ fn bench_circular_orbit_1period(c: &mut Criterion) {
             let tol = Tolerances::new(1e-12, 1e-12);
             let mut solver = Rkf78::new(tol);
             solver
-                .integrate(&sys, 0.0, black_box(&y0), period, 60.0)
+                .integrate(
+                    &sys,
+                    &IntegrationConfig::new(0.0, period, 60.0),
+                    black_box(&y0),
+                )
                 .unwrap()
         })
     });
@@ -63,7 +67,11 @@ fn bench_harmonic_oscillator_1period(c: &mut Criterion) {
             let tol = Tolerances::new(1e-12, 1e-12);
             let mut solver = Rkf78::new(tol);
             solver
-                .integrate(&sys, 0.0, black_box(&y0), period, 0.1)
+                .integrate(
+                    &sys,
+                    &IntegrationConfig::new(0.0, period, 0.1),
+                    black_box(&y0),
+                )
                 .unwrap()
         })
     });

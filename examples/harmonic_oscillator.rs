@@ -5,7 +5,7 @@
 //! Run with:
 //!   cargo run --example harmonic_oscillator
 
-use rkf78::{OdeSystem, Rkf78, Tolerances};
+use rkf78::{IntegrationConfig, OdeSystem, Rkf78, Tolerances};
 
 /// Simple harmonic oscillator: y'' + ω²y = 0
 ///
@@ -32,7 +32,9 @@ fn main() {
     let tol = Tolerances::new(1e-12, 1e-12);
     let mut solver = Rkf78::new(tol);
 
-    let (tf, yf) = solver.integrate(&sys, 0.0, &y0, period, 0.01).unwrap();
+    let (tf, yf) = solver
+        .integrate(&sys, &IntegrationConfig::new(0.0, period, 0.01), &y0)
+        .unwrap();
 
     // Exact solution: y(t) = cos(ωt), y'(t) = -ω sin(ωt)
     let y_exact = (omega * tf).cos();

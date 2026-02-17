@@ -16,7 +16,7 @@
 //! ## Basic Usage
 //!
 //! ```rust
-//! use rkf78::{Rkf78, OdeSystem, Tolerances};
+//! use rkf78::{Rkf78, OdeSystem, Tolerances, IntegrationConfig};
 //!
 //! // Define your ODE system
 //! struct HarmonicOscillator { omega: f64 }
@@ -34,7 +34,7 @@
 //! let mut solver = Rkf78::new(tol);
 //!
 //! let y0 = [1.0, 0.0];  // Initial conditions
-//! let (tf, yf) = solver.integrate(&sys, 0.0, &y0, 10.0, 0.1).unwrap();
+//! let (tf, yf) = solver.integrate(&sys, &IntegrationConfig::new(0.0, 10.0, 0.1), &y0).unwrap();
 //! ```
 //!
 //! ## Event Finding
@@ -68,7 +68,8 @@
 //! };
 //!
 //! // Integrate with event detection (sys implements OdeSystem<f64, 2>)
-//! match solver.integrate_to_event(&sys, &event, &config, t0, &y0, tf, h0) {
+//! let int_config = IntegrationConfig::new(t0, tf, h0);
+//! match solver.integrate_to_event(&sys, &event, &config, &int_config, &y0) {
 //!     Ok(IntegrationResult::Event(ev)) => {
 //!         println!("Event at t = {}, y = {:?}", ev.t, ev.y);
 //!     }
@@ -137,5 +138,6 @@ pub mod solver;
 pub use events::{EventAction, EventConfig, EventDirection, EventFunction, EventResult};
 pub use scalar::{Float, Scalar};
 pub use solver::{
-    IntegrationError, IntegrationResult, OdeSystem, Rkf78, Stats, StepResult, Tolerances,
+    IntegrationConfig, IntegrationError, IntegrationResult, OdeSystem, Rkf78, Stats,
+    StepController, StepResult, Tolerances,
 };

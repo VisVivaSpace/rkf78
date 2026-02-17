@@ -65,7 +65,7 @@ impl std::fmt::Display for Stats {
 /// h_new = safety * h * error^(-1/p)
 /// where p = 8 for RKF78
 #[derive(Clone, Copy)]
-pub(crate) struct StepController<R: Float> {
+pub struct StepController<R: Float> {
     /// Safety factor (0.8-0.9 typical)
     pub safety: R,
     /// Maximum growth factor per step
@@ -88,6 +88,29 @@ impl<R: Float> Default for StepController<R> {
 }
 
 impl<R: Float> StepController<R> {
+    /// Create a new step controller with default parameters.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the safety factor (0.8–0.9 typical).
+    pub fn with_safety(mut self, v: R) -> Self {
+        self.safety = v;
+        self
+    }
+
+    /// Set the maximum growth factor per step.
+    pub fn with_max_factor(mut self, v: R) -> Self {
+        self.max_factor = v;
+        self
+    }
+
+    /// Set the minimum reduction factor per step.
+    pub fn with_min_factor(mut self, v: R) -> Self {
+        self.min_factor = v;
+        self
+    }
+
     /// Compute the step size adjustment factor
     pub fn compute_factor(&self, error: R) -> R {
         if error == R::ZERO {
@@ -125,6 +148,62 @@ impl<R: Float, const N: usize> Tolerances<R, N> {
     }
 }
 
+/// Configuration for an integration run.
+///
+/// Specifies the time span, initial step size, step limits, and max steps.
+/// The `h0` parameter is always a positive magnitude — integration direction
+/// is inferred from `(tf - t0).signum()`.
+#[derive(Debug, Clone, Copy)]
+pub struct IntegrationConfig<R: Float> {
+    /// Initial time
+    pub t0: R,
+    /// Final time
+    pub tf: R,
+    /// Initial step size (positive magnitude; direction inferred from tf − t0)
+    pub h0: R,
+    /// Minimum step size magnitude (default: 1e-14)
+    pub h_min: R,
+    /// Maximum step size magnitude (default: infinity)
+    pub h_max: R,
+    /// Maximum number of integration steps (default: 10,000,000)
+    pub max_steps: u64,
+}
+
+impl<R: Float> IntegrationConfig<R> {
+    /// Create a new integration config.
+    ///
+    /// `h0` is stored as its absolute value. Integration direction
+    /// is inferred from `tf - t0`.
+    pub fn new(t0: R, tf: R, h0: R) -> Self {
+        Self {
+            t0,
+            tf,
+            h0: h0.abs(),
+            h_min: R::from_f64(1e-14),
+            h_max: R::INFINITY,
+            max_steps: 10_000_000,
+        }
+    }
+
+    /// Set the minimum step size magnitude.
+    pub fn with_h_min(mut self, v: R) -> Self {
+        self.h_min = v;
+        self
+    }
+
+    /// Set the maximum step size magnitude.
+    pub fn with_h_max(mut self, v: R) -> Self {
+        self.h_max = v;
+        self
+    }
+
+    /// Set the maximum number of integration steps.
+    pub fn with_max_steps(mut self, v: u64) -> Self {
+        self.max_steps = v;
+        self
+    }
+}
+
 /// Runge-Kutta-Fehlberg 7(8) integrator
 ///
 /// # Type Parameters
@@ -133,7 +212,7 @@ impl<R: Float, const N: usize> Tolerances<R, N> {
 ///
 /// # Example
 /// ```ignore
-/// use rkf78::{Rkf78, OdeSystem, Tolerances};
+/// use rkf78::{Rkf78, OdeSystem, Tolerances, IntegrationConfig};
 ///
 /// struct HarmonicOscillator { omega: f64 }
 ///
@@ -149,8 +228,9 @@ impl<R: Float, const N: usize> Tolerances<R, N> {
 ///
 /// let sys = HarmonicOscillator { omega: 1.0 };
 /// let y0 = [1.0, 0.0];
+/// let config = IntegrationConfig::new(0.0, 10.0, 0.1);
 ///
-/// let (tf, yf) = solver.integrate(&sys, 0.0, &y0, 10.0, 0.1).unwrap();
+/// let (tf, yf) = solver.integrate(&sys, &config, &y0).unwrap();
 /// ```
 #[derive(Clone)]
 pub struct Rkf78<T: Scalar, const N: usize> {
@@ -158,12 +238,6 @@ pub struct Rkf78<T: Scalar, const N: usize> {
     tol: Tolerances<T::Real, N>,
     /// Step-size controller
     controller: StepController<T::Real>,
-    /// Minimum step size
-    pub h_min: T::Real,
-    /// Maximum step size
-    pub h_max: T::Real,
-    /// Maximum number of integration steps before error
-    pub max_steps: u64,
     /// Stage evaluations (pre-allocated workspace)
     k: [[T; N]; STAGES],
     /// Integration statistics
@@ -179,19 +253,30 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
         Self {
             tol,
             controller: StepController::default(),
-            h_min: T::Real::from_f64(1e-14),
-            h_max: T::Real::INFINITY,
-            max_steps: 10_000_000,
             k: [[T::ZERO; N]; STAGES],
             stats: Stats::default(),
             collected_events: Vec::new(),
         }
     }
 
+    /// Set a custom step-size controller.
+    pub fn with_controller(mut self, controller: StepController<T::Real>) -> Self {
+        self.controller = controller;
+        self
+    }
+
     /// Perform a single integration step
     ///
     /// This computes the 13 stages, forms the 8th and 7th order solutions,
     /// estimates the error, and determines if the step should be accepted.
+    /// Perform a single integration step
+    ///
+    /// This computes the 13 stages, forms the 8th and 7th order solutions,
+    /// estimates the error, and determines if the step should be accepted.
+    ///
+    /// `h` is used as-is (signed). The returned `h_next` is a positive
+    /// magnitude — the caller is responsible for applying direction and
+    /// clamping to step-size limits.
     pub fn step<S: OdeSystem<T, N>>(
         &mut self,
         sys: &S,
@@ -199,8 +284,6 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
         y: &[T; N],
         h: T::Real,
     ) -> StepResult<T, N> {
-        let h = h.signum() * h.abs().clamp(self.h_min, self.h_max);
-
         // Compute all 13 stages
         self.compute_stages(sys, t, y, h);
 
@@ -213,9 +296,9 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
         // Determine acceptance
         let accepted = error <= T::Real::ONE;
 
-        // Compute next step size (always positive magnitude)
+        // Compute next step size (positive magnitude, no h_min/h_max clamping)
         let factor = self.controller.compute_factor(error);
-        let h_next = (h.abs() * factor).clamp(self.h_min, self.h_max);
+        let h_next = h.abs() * factor;
 
         // Update statistics
         self.stats.fn_evals += STAGES as u64;
@@ -234,14 +317,12 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
         }
     }
 
-    /// Integrate from t0 to tf
+    /// Integrate from `config.t0` to `config.tf`.
     ///
     /// # Arguments
     /// * `sys` - The ODE system to integrate
-    /// * `t0` - Initial time
+    /// * `config` - Integration configuration (time span, step size, limits)
     /// * `y0` - Initial state
-    /// * `tf` - Final time
-    /// * `h0` - Initial step size guess
     ///
     /// # Returns
     /// * `Ok((t_final, y_final))` on success
@@ -251,27 +332,25 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
     pub fn integrate<S: OdeSystem<T, N>>(
         &mut self,
         sys: &S,
-        t0: T::Real,
+        config: &IntegrationConfig<T::Real>,
         y0: &[T; N],
-        tf: T::Real,
-        h0: T::Real,
     ) -> Result<(T::Real, [T; N]), IntegrationError<T::Real>> {
-        if t0 == tf {
-            return Ok((t0, *y0));
+        if config.t0 == config.tf {
+            return Ok((config.t0, *y0));
         }
-        self.validate_inputs(t0, y0, tf, h0)?;
+        self.validate_inputs(config, y0)?;
 
-        let mut t = t0;
+        let mut t = config.t0;
         let mut y = *y0;
-        let mut h = h0;
+        let direction = (config.tf - config.t0).signum();
+        let mut h = config.h0.clamp(config.h_min, config.h_max) * direction;
 
-        let direction = (tf - t0).signum();
         let mut step_count = 0u64;
 
-        while (tf - t) * direction > self.h_min {
+        while (config.tf - t) * direction > config.h_min {
             // Don't overshoot the endpoint
-            if (t + h - tf) * direction > T::Real::ZERO {
-                h = tf - t;
+            if (t + h - config.tf) * direction > T::Real::ZERO {
+                h = config.tf - t;
             }
 
             let result = self.step(sys, t, &y, h);
@@ -284,16 +363,18 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
                 }
             }
 
-            h = result.h_next * direction;
+            h = result.h_next.clamp(config.h_min, config.h_max) * direction;
 
             step_count += 1;
-            if step_count > self.max_steps {
+            if step_count > config.max_steps {
                 return Err(IntegrationError::MaxStepsExceeded);
             }
 
             // Check for step size too small: if the step was rejected and
             // the next step size is already at h_min, we can't make progress
-            if !result.accepted && result.h_next <= self.h_min && (tf - t) * direction > self.h_min
+            if !result.accepted
+                && result.h_next <= config.h_min
+                && (config.tf - t) * direction > config.h_min
             {
                 return Err(IntegrationError::StepSizeTooSmall {
                     t,
@@ -380,25 +461,17 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
     /// Validate integration inputs
     fn validate_inputs(
         &self,
-        t0: T::Real,
+        config: &IntegrationConfig<T::Real>,
         y0: &[T; N],
-        tf: T::Real,
-        h0: T::Real,
     ) -> Result<(), IntegrationError<T::Real>> {
-        if !t0.is_finite() || !tf.is_finite() || !h0.is_finite() {
+        if !config.t0.is_finite() || !config.tf.is_finite() || !config.h0.is_finite() {
             return Err(IntegrationError::InvalidInput {
                 message: "t0, tf, and h0 must be finite".to_string(),
             });
         }
-        if h0 == T::Real::ZERO {
+        if config.h0 == T::Real::ZERO {
             return Err(IntegrationError::InvalidInput {
                 message: "h0 must be non-zero".to_string(),
-            });
-        }
-        let direction = tf - t0;
-        if direction != T::Real::ZERO && h0.signum() != direction.signum() {
-            return Err(IntegrationError::InvalidInput {
-                message: "h0 sign must match integration direction (tf - t0)".to_string(),
             });
         }
         for (i, val) in y0.iter().enumerate() {
@@ -436,78 +509,50 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
     /// # Arguments
     /// * `sys` - The ODE system to integrate
     /// * `event` - The event function to monitor
-    /// * `config` - Configuration for event detection
-    /// * `t0` - Initial time
+    /// * `event_config` - Configuration for event detection
+    /// * `config` - Integration configuration (time span, step size, limits)
     /// * `y0` - Initial state
-    /// * `tf` - Final time (integration stops here if no event)
-    /// * `h0` - Initial step size guess
     ///
     /// # Returns
     /// * `Ok(IntegrationResult::Event(event_result))` - Event was detected
     /// * `Ok(IntegrationResult::Completed(t, y))` - Reached tf without event
     /// * `Err(IntegrationError)` - Integration failed
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use rkf78::{Rkf78, OdeSystem, Tolerances, EventFunction, EventConfig};
-    ///
-    /// // Detect periapsis (radial velocity = 0, approaching)
-    /// struct PeriapsisEvent;
-    /// impl EventFunction<f64, 6> for PeriapsisEvent {
-    ///     fn eval(&self, _t: f64, y: &[f64; 6]) -> f64 {
-    ///         // Radial velocity: r_dot = (r . v) / |r|
-    ///         let r = (y[0]*y[0] + y[1]*y[1] + y[2]*y[2]).sqrt();
-    ///         (y[0]*y[3] + y[1]*y[4] + y[2]*y[5]) / r
-    ///     }
-    /// }
-    ///
-    /// let sys = TwoBodyProblem { mu: 398600.4418 };
-    /// let event = PeriapsisEvent;
-    /// let config = EventConfig {
-    ///     direction: EventDirection::Rising,  // r_dot going from - to +
-    ///     ..Default::default()
-    /// };
-    ///
-    /// let result = solver.integrate_to_event(&sys, &event, &config, t0, &y0, tf, h0);
-    /// ```
-    #[allow(clippy::too_many_arguments)]
     #[must_use = "integration result contains the final state or event"]
     pub fn integrate_to_event<S, E>(
         &mut self,
         sys: &S,
         event: &E,
-        config: &EventConfig<T::Real>,
-        t0: T::Real,
+        event_config: &EventConfig<T::Real>,
+        config: &IntegrationConfig<T::Real>,
         y0: &[T; N],
-        tf: T::Real,
-        h0: T::Real,
     ) -> Result<IntegrationResult<T, N>, IntegrationError<T::Real>>
     where
         S: OdeSystem<T, N>,
         E: EventFunction<T, N>,
     {
-        if t0 == tf {
-            return Ok(IntegrationResult::Completed { t: t0, y: *y0 });
+        if config.t0 == config.tf {
+            return Ok(IntegrationResult::Completed {
+                t: config.t0,
+                y: *y0,
+            });
         }
-        self.validate_inputs(t0, y0, tf, h0)?;
+        self.validate_inputs(config, y0)?;
         self.collected_events.clear();
 
-        let mut t = t0;
+        let mut t = config.t0;
         let mut y = *y0;
-        let mut h = h0;
-
-        let direction = (tf - t0).signum();
+        let direction = (config.tf - config.t0).signum();
+        let mut h = config.h0.clamp(config.h_min, config.h_max) * direction;
 
         // Evaluate initial event function
         let mut g_prev = event.eval(t, &y);
 
         let mut step_count = 0u64;
 
-        while (tf - t) * direction > self.h_min {
+        while (config.tf - t) * direction > config.h_min {
             // Don't overshoot the endpoint
-            if (t + h - tf) * direction > T::Real::ZERO {
-                h = tf - t;
+            if (t + h - config.tf) * direction > T::Real::ZERO {
+                h = config.tf - t;
             }
 
             let result = self.step(sys, t, &y, h);
@@ -517,13 +562,21 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
                 let g_new = event.eval(result.t, &result.y);
 
                 // Check for sign change
-                if sign_change_detected(g_prev, g_new, config.direction) {
+                if sign_change_detected(g_prev, g_new, event_config.direction) {
                     // Event detected! Use Brent's method to find precise time
                     let event_result = self.find_event_root(
-                        sys, event, t, &y, result.t, &result.y, g_prev, g_new, config,
+                        sys,
+                        event,
+                        t,
+                        &y,
+                        result.t,
+                        &result.y,
+                        g_prev,
+                        g_new,
+                        event_config,
                     )?;
 
-                    match config.action {
+                    match event_config.action {
                         EventAction::Stop => {
                             return Ok(IntegrationResult::Event(event_result));
                         }
@@ -534,7 +587,7 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
                             t = result.t;
                             y = result.y;
                             g_prev = g_new;
-                            h = result.h_next * direction;
+                            h = result.h_next.clamp(config.h_min, config.h_max) * direction;
                             continue;
                         }
                     }
@@ -549,14 +602,16 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
                 g_prev = g_new;
             }
 
-            h = result.h_next * direction;
+            h = result.h_next.clamp(config.h_min, config.h_max) * direction;
 
             step_count += 1;
-            if step_count > self.max_steps {
+            if step_count > config.max_steps {
                 return Err(IntegrationError::MaxStepsExceeded);
             }
 
-            if !result.accepted && result.h_next <= self.h_min && (tf - t) * direction > self.h_min
+            if !result.accepted
+                && result.h_next <= config.h_min
+                && (config.tf - t) * direction > config.h_min
             {
                 return Err(IntegrationError::StepSizeTooSmall {
                     t,
@@ -767,7 +822,9 @@ mod tests {
         let tol = Tolerances::new(1e-12, 1e-12);
         let mut solver = Rkf78::new(tol);
 
-        let (t_final, y_final) = solver.integrate(&sys, t0, &y0, tf, 0.1).unwrap();
+        let (t_final, y_final) = solver
+            .integrate(&sys, &IntegrationConfig::new(t0, tf, 0.1), &y0)
+            .unwrap();
 
         // Should return to initial conditions after one period
         assert!((t_final - tf).abs() < 1e-10);
@@ -806,7 +863,9 @@ mod tests {
         let tol = Tolerances::new(1e-14, 1e-14);
         let mut solver = Rkf78::new(tol);
 
-        let (_, y_final) = solver.integrate(&sys, 0.0, &y0, tf, 0.1).unwrap();
+        let (_, y_final) = solver
+            .integrate(&sys, &IntegrationConfig::new(0.0, tf, 0.1), &y0)
+            .unwrap();
         let exact = (-tf).exp();
 
         let rel_error = (y_final[0] - exact).abs() / exact;
@@ -872,7 +931,9 @@ mod tests {
 
         let e0 = compute_energy(&y0);
 
-        let (_, y_final) = solver.integrate(&sys, 0.0, &y0, period, 60.0).unwrap();
+        let (_, y_final) = solver
+            .integrate(&sys, &IntegrationConfig::new(0.0, period, 60.0), &y0)
+            .unwrap();
 
         let e_final = compute_energy(&y_final);
         let rel_energy_error = (e_final - e0).abs() / e0.abs();
@@ -1004,7 +1065,13 @@ mod tests {
 
         let y0 = [1.0];
         let result = solver
-            .integrate_to_event(&sys, &event, &config, 0.0, &y0, 10.0, 0.1)
+            .integrate_to_event(
+                &sys,
+                &event,
+                &config,
+                &IntegrationConfig::new(0.0, 10.0, 0.1),
+                &y0,
+            )
             .unwrap();
 
         match result {
@@ -1094,7 +1161,13 @@ mod tests {
         let mut solver = Rkf78::new(tol);
 
         let result = solver
-            .integrate_to_event(&sys, &event, &config, 0.0, &y0, period, 60.0)
+            .integrate_to_event(
+                &sys,
+                &event,
+                &config,
+                &IntegrationConfig::new(0.0, period, 60.0),
+                &y0,
+            )
             .unwrap();
 
         match result {
@@ -1149,7 +1222,13 @@ mod tests {
 
         let y0 = [0.0];
         let result = solver
-            .integrate_to_event(&LinearODE, &event, &config, 0.0, &y0, 5.0, 0.1)
+            .integrate_to_event(
+                &LinearODE,
+                &event,
+                &config,
+                &IntegrationConfig::new(0.0, 5.0, 0.1),
+                &y0,
+            )
             .unwrap();
 
         match result {
@@ -1176,7 +1255,7 @@ mod tests {
                 dydt[0] = 0.0;
             }
         }
-        let result = solver.integrate(&Dummy, 0.0, &[1.0], 1.0, 0.1);
+        let result = solver.integrate(&Dummy, &IntegrationConfig::new(0.0, 1.0, 0.1), &[1.0]);
         assert!(matches!(result, Err(IntegrationError::InvalidInput { .. })));
     }
 
@@ -1190,7 +1269,7 @@ mod tests {
                 dydt[0] = 0.0;
             }
         }
-        let result = solver.integrate(&Dummy, 0.0, &[1.0], 1.0, 0.1);
+        let result = solver.integrate(&Dummy, &IntegrationConfig::new(0.0, 1.0, 0.1), &[1.0]);
         assert!(matches!(result, Err(IntegrationError::InvalidInput { .. })));
     }
 
@@ -1204,12 +1283,14 @@ mod tests {
                 dydt[0] = 0.0;
             }
         }
-        let result = solver.integrate(&Dummy, 0.0, &[1.0], 1.0, 0.1);
+        let result = solver.integrate(&Dummy, &IntegrationConfig::new(0.0, 1.0, 0.1), &[1.0]);
         assert!(matches!(result, Err(IntegrationError::InvalidInput { .. })));
     }
 
     #[test]
-    fn test_h0_wrong_sign_rejected() {
+    fn test_h0_sign_ignored_backward_works() {
+        // With the new API, h0 sign is ignored (abs'd in IntegrationConfig::new).
+        // Direction is inferred from tf - t0. Verify backward integration with positive h0 works.
         let tol = Tolerances::new(1e-12, 1e-12);
         let mut solver = Rkf78::new(tol);
         struct Dummy;
@@ -1218,9 +1299,16 @@ mod tests {
                 dydt[0] = 0.0;
             }
         }
-        // Integrating forward but h0 is negative
-        let result = solver.integrate(&Dummy, 0.0, &[1.0], 1.0, -0.1);
-        assert!(matches!(result, Err(IntegrationError::InvalidInput { .. })));
+        // Integrating backward (tf < t0) with positive h0 — should succeed
+        let result = solver.integrate(&Dummy, &IntegrationConfig::new(1.0, 0.0, 0.1), &[1.0]);
+        assert!(
+            result.is_ok(),
+            "Backward integration with positive h0 should work, got {:?}",
+            result
+        );
+        let (t, y) = result.unwrap();
+        assert!((t - 0.0).abs() < 1e-10);
+        assert_eq!(y[0], 1.0);
     }
 
     #[test]
@@ -1233,7 +1321,7 @@ mod tests {
                 dydt[0] = 0.0;
             }
         }
-        let result = solver.integrate(&Dummy, 0.0, &[f64::NAN], 1.0, 0.1);
+        let result = solver.integrate(&Dummy, &IntegrationConfig::new(0.0, 1.0, 0.1), &[f64::NAN]);
         assert!(matches!(result, Err(IntegrationError::InvalidInput { .. })));
     }
 
@@ -1247,7 +1335,9 @@ mod tests {
                 dydt[0] = 1.0;
             }
         }
-        let (t, y) = solver.integrate(&Dummy, 5.0, &[42.0], 5.0, 0.1).unwrap();
+        let (t, y) = solver
+            .integrate(&Dummy, &IntegrationConfig::new(5.0, 5.0, 0.1), &[42.0])
+            .unwrap();
         assert_eq!(t, 5.0);
         assert_eq!(y[0], 42.0);
     }
@@ -1267,8 +1357,10 @@ mod tests {
         let tol = Tolerances::new(1e-12, 1e-12);
         let mut solver = Rkf78::new(tol);
 
-        // Integrate backward: from tf to 0, with negative step size
-        let (t_final, y_final) = solver.integrate(&sys, tf, &y0, 0.0, -0.1).unwrap();
+        // Integrate backward: from tf to 0 (direction inferred from tf > t0)
+        let (t_final, y_final) = solver
+            .integrate(&sys, &IntegrationConfig::new(tf, 0.0, 0.1), &y0)
+            .unwrap();
 
         assert!((t_final - 0.0).abs() < 1e-10, "t_final = {}", t_final);
         assert!(
@@ -1310,7 +1402,9 @@ mod tests {
         let tol = Tolerances::new(1e-12, 1e-12);
         let mut solver = Rkf78::new(tol);
 
-        let (_, y_final) = solver.integrate(&sys, 0.0, &y0, period, 10.0).unwrap();
+        let (_, y_final) = solver
+            .integrate(&sys, &IntegrationConfig::new(0.0, period, 10.0), &y0)
+            .unwrap();
 
         let e_final = compute_energy(&y_final);
         let rel_energy_error = (e_final - e0).abs() / e0.abs();
@@ -1350,7 +1444,9 @@ mod tests {
 
         // Integrate for a reasonable time (not too long or spacecraft flies away)
         let tf = 3600.0; // 1 hour
-        let (_, y_final) = solver.integrate(&sys, 0.0, &y0, tf, 10.0).unwrap();
+        let (_, y_final) = solver
+            .integrate(&sys, &IntegrationConfig::new(0.0, tf, 10.0), &y0)
+            .unwrap();
 
         let e_final = compute_energy(&y_final);
         let rel_energy_error = (e_final - e0).abs() / e0.abs();
@@ -1376,10 +1472,13 @@ mod tests {
         let mut solver = Rkf78::new(tol);
         // Set h_min high enough that the step controller triggers StepSizeTooSmall
         // before we hit max_steps
-        solver.h_min = 1e-4;
 
         // y(0) = 0.001 (start very close to singularity so step size shrinks immediately)
-        let result = solver.integrate(&SingularODE, 0.0, &[0.001], 1.0, 0.0001);
+        let result = solver.integrate(
+            &SingularODE,
+            &IntegrationConfig::new(0.0, 1.0, 0.0001).with_h_min(1e-4),
+            &[0.001],
+        );
         assert!(
             matches!(result, Err(IntegrationError::StepSizeTooSmall { .. })),
             "Expected StepSizeTooSmall, got {:?}",
@@ -1391,12 +1490,15 @@ mod tests {
     fn test_max_steps_exceeded() {
         let tol = Tolerances::new(1e-12, 1e-12);
         let mut solver = Rkf78::new(tol);
-        solver.max_steps = 5;
 
         let sys = HarmonicOscillator { omega: 1.0 };
         let y0 = [1.0, 0.0];
 
-        let result = solver.integrate(&sys, 0.0, &y0, 100.0, 0.01);
+        let result = solver.integrate(
+            &sys,
+            &IntegrationConfig::new(0.0, 100.0, 0.01).with_max_steps(5),
+            &y0,
+        );
         assert!(
             matches!(result, Err(IntegrationError::MaxStepsExceeded)),
             "Expected MaxStepsExceeded, got {:?}",
@@ -1416,7 +1518,9 @@ mod tests {
         let mut solver = Rkf78::new(tol);
 
         // h0 = 100 is absurdly large for this problem
-        let (t_final, y_final) = solver.integrate(&sys, 0.0, &y0, tf, 100.0).unwrap();
+        let (t_final, y_final) = solver
+            .integrate(&sys, &IntegrationConfig::new(0.0, tf, 100.0), &y0)
+            .unwrap();
 
         // Should still get the right answer
         assert!((t_final - tf).abs() < 1e-10);
@@ -1463,10 +1567,8 @@ mod tests {
                 &LinearGrowth,
                 &ZeroCrossing,
                 &config,
-                0.0,
+                &IntegrationConfig::new(0.0, 10.0, 0.1),
                 &[-0.001],
-                10.0,
-                0.1,
             )
             .unwrap();
 
@@ -1506,7 +1608,13 @@ mod tests {
         let mut solver = Rkf78::new(tol);
 
         let result = solver
-            .integrate_to_event(&LinearGrowth, &event, &config, 0.0, &[0.0], 5.0, 0.1)
+            .integrate_to_event(
+                &LinearGrowth,
+                &event,
+                &config,
+                &IntegrationConfig::new(0.0, 5.0, 0.1),
+                &[0.0],
+            )
             .unwrap();
 
         match result {
@@ -1553,7 +1661,13 @@ mod tests {
         let mut solver = Rkf78::new(tol);
 
         let result = solver
-            .integrate_to_event(&LinearODE, &ZeroCross, &config, 0.0, &[-1.0], 5.0, 0.1)
+            .integrate_to_event(
+                &LinearODE,
+                &ZeroCross,
+                &config,
+                &IntegrationConfig::new(0.0, 5.0, 0.1),
+                &[-1.0],
+            )
             .unwrap();
 
         // Should complete to tf (not stop at event)
@@ -1611,7 +1725,9 @@ mod tests {
         let tol = Tolerances::new(1e-12, 1e-12);
         let mut solver = Rkf78::new(tol);
 
-        let (_, y_final) = solver.integrate(&sys, 0.0, &y0, tf, 60.0).unwrap();
+        let (_, y_final) = solver
+            .integrate(&sys, &IntegrationConfig::new(0.0, tf, 60.0), &y0)
+            .unwrap();
         let e_final = compute_energy(&y_final);
         let rel_energy_error = (e_final - e0).abs() / e0.abs();
 
@@ -1633,11 +1749,15 @@ mod tests {
         let mut solver = Rkf78::new(tol.clone());
 
         // Forward one period
-        let (t_mid, y_mid) = solver.integrate(&sys, 0.0, &y0, period, 0.1).unwrap();
+        let (t_mid, y_mid) = solver
+            .integrate(&sys, &IntegrationConfig::new(0.0, period, 0.1), &y0)
+            .unwrap();
 
         // Backward one period
         let mut solver2 = Rkf78::new(tol);
-        let (t_final, y_final) = solver2.integrate(&sys, t_mid, &y_mid, 0.0, -0.1).unwrap();
+        let (t_final, y_final) = solver2
+            .integrate(&sys, &IntegrationConfig::new(t_mid, 0.0, 0.1), &y_mid)
+            .unwrap();
 
         assert!(
             t_final.abs() < 1e-10,
@@ -1671,19 +1791,25 @@ mod tests {
         // Run with loose uniform tolerance
         let tol_loose = Tolerances::new(1e-6, 1e-6);
         let mut solver_loose = Rkf78::new(tol_loose);
-        let (_, y_loose) = solver_loose.integrate(&sys, 0.0, &y0, tf, 0.1).unwrap();
+        let (_, y_loose) = solver_loose
+            .integrate(&sys, &IntegrationConfig::new(0.0, tf, 0.1), &y0)
+            .unwrap();
         let steps_loose = solver_loose.stats.accepted_steps;
 
         // Run with tight uniform tolerance
         let tol_tight = Tolerances::new(1e-13, 1e-13);
         let mut solver_tight = Rkf78::new(tol_tight);
-        let (_, y_tight) = solver_tight.integrate(&sys, 0.0, &y0, tf, 0.1).unwrap();
+        let (_, y_tight) = solver_tight
+            .integrate(&sys, &IntegrationConfig::new(0.0, tf, 0.1), &y0)
+            .unwrap();
         let steps_tight = solver_tight.stats.accepted_steps;
 
         // Run with per-component: tight on y[0], loose on y[1]
         let tol_mixed = Tolerances::with_components([1e-13, 1e-6], [1e-13, 1e-6]);
         let mut solver_mixed = Rkf78::new(tol_mixed);
-        let (_, y_mixed) = solver_mixed.integrate(&sys, 0.0, &y0, tf, 0.1).unwrap();
+        let (_, y_mixed) = solver_mixed
+            .integrate(&sys, &IntegrationConfig::new(0.0, tf, 0.1), &y0)
+            .unwrap();
         let steps_mixed = solver_mixed.stats.accepted_steps;
 
         println!(
@@ -1771,7 +1897,9 @@ mod tests {
         let run = |atol: f64, rtol: f64| -> f64 {
             let tol = Tolerances::new(atol, rtol);
             let mut solver = Rkf78::new(tol);
-            let (_, y_final) = solver.integrate(&sys, 0.0, &y0, tf, 0.1).unwrap();
+            let (_, y_final) = solver
+                .integrate(&sys, &IntegrationConfig::new(0.0, tf, 0.1), &y0)
+                .unwrap();
             (y_final[0] - exact_y0).abs()
         };
 
@@ -1824,7 +1952,9 @@ mod tests {
         let tol = Tolerances::new(1e-12, 1e-12);
         let mut solver = Rkf78::new(tol);
 
-        let (_, y_final) = solver.integrate(&sys, 0.0, &y0, period, 1.0).unwrap();
+        let (_, y_final) = solver
+            .integrate(&sys, &IntegrationConfig::new(0.0, period, 1.0), &y0)
+            .unwrap();
 
         let e_final = compute_energy(&y_final);
         let rel_energy_error = (e_final - e0).abs() / e0.abs();
@@ -1866,7 +1996,13 @@ mod tests {
 
         let tf = 4.0 * std::f64::consts::PI;
         let result = solver
-            .integrate_to_event(&sys, &PositionZero, &config, 0.0, &[1.0, 0.0], tf, 0.1)
+            .integrate_to_event(
+                &sys,
+                &PositionZero,
+                &config,
+                &IntegrationConfig::new(0.0, tf, 0.1),
+                &[1.0, 0.0],
+            )
             .unwrap();
 
         // Should complete to tf
@@ -1923,13 +2059,11 @@ mod tests {
 
         let y0 = [1.0_f32, 0.0];
         let tf = 2.0 * std::f32::consts::PI;
-        let (t_final, y_final) = solver.integrate(&sys, 0.0, &y0, tf, 0.1).unwrap();
+        let (t_final, y_final) = solver
+            .integrate(&sys, &IntegrationConfig::new(0.0, tf, 0.1), &y0)
+            .unwrap();
 
-        assert!(
-            (t_final - tf).abs() < 1e-4,
-            "f32 t_final: {}",
-            t_final
-        );
+        assert!((t_final - tf).abs() < 1e-4, "f32 t_final: {}", t_final);
         assert!(
             (y_final[0] - 1.0).abs() < 1e-3,
             "f32 y(2pi) = {}, expected ~1.0",
@@ -1979,7 +2113,9 @@ mod tests {
         };
 
         let e0 = compute_energy(&y0);
-        let (_, y_final) = solver.integrate(&sys, 0.0, &y0, period, 60.0).unwrap();
+        let (_, y_final) = solver
+            .integrate(&sys, &IntegrationConfig::new(0.0, period, 60.0), &y0)
+            .unwrap();
         let e_final = compute_energy(&y_final);
 
         let rel_energy_error = (e_final - e0).abs() / e0.abs();

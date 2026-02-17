@@ -6,7 +6,7 @@
 #![cfg(feature = "gpu")]
 
 use rkf78::gpu::{GpuBatchPropagator, GpuIntegrationParams, GpuState};
-use rkf78::{OdeSystem, Rkf78, Tolerances};
+use rkf78::{IntegrationConfig, OdeSystem, Rkf78, Tolerances};
 
 /// Earth gravitational parameter [km³/s²]
 const MU: f64 = 398600.4418;
@@ -41,7 +41,7 @@ struct TwoBody {
     mu: f64,
 }
 
-impl OdeSystem<6> for TwoBody {
+impl OdeSystem<f64, 6> for TwoBody {
     fn rhs(&self, _t: f64, y: &[f64; 6], dydt: &mut [f64; 6]) {
         let r = (y[0] * y[0] + y[1] * y[1] + y[2] * y[2]).sqrt();
         let r3 = r * r * r;
@@ -98,7 +98,7 @@ fn test_circular_orbit_gpu_vs_cpu() {
     let tol = Tolerances::new(1e-12, 1e-12);
     let mut solver = Rkf78::new(tol);
     let (_, y_cpu) = solver
-        .integrate(&sys, 0.0, &y0, period as f64, 60.0)
+        .integrate(&sys, &IntegrationConfig::new(0.0, period as f64, 60.0), &y0)
         .unwrap();
 
     // Compare positions — f32 limit is ~7 significant digits on ~7000 km values
@@ -226,7 +226,9 @@ fn test_elliptical_orbit_gpu_vs_cpu() {
     let y0 = [rp, 0.0, 0.0, 0.0, v_peri, 0.0];
     let tol = Tolerances::new(1e-12, 1e-12);
     let mut solver = Rkf78::new(tol);
-    let (_, y_cpu) = solver.integrate(&sys, 0.0, &y0, period, 10.0).unwrap();
+    let (_, y_cpu) = solver
+        .integrate(&sys, &IntegrationConfig::new(0.0, period, 10.0), &y0)
+        .unwrap();
 
     let dx = (gpu_states[0].position[0] as f64 - y_cpu[0]).abs();
     let dy = (gpu_states[0].position[1] as f64 - y_cpu[1]).abs();

@@ -7,8 +7,8 @@
 //!   cargo run --example event_detection
 
 use rkf78::{
-    EventAction, EventConfig, EventDirection, EventFunction, IntegrationResult, OdeSystem, Rkf78,
-    Tolerances,
+    EventAction, EventConfig, EventDirection, EventFunction, IntegrationConfig, IntegrationResult,
+    OdeSystem, Rkf78, Tolerances,
 };
 
 /// Keplerian two-body problem (same as two_body_orbit example).
@@ -76,7 +76,13 @@ fn main() {
 
     // Integrate for 1.5 periods to guarantee we cross periapsis
     let result = solver
-        .integrate_to_event(&sys, &event, &config, 0.0, &y0, 1.5 * period, 10.0)
+        .integrate_to_event(
+            &sys,
+            &event,
+            &config,
+            &IntegrationConfig::new(0.0, 1.5 * period, 10.0),
+            &y0,
+        )
         .unwrap();
 
     match result {
@@ -107,7 +113,13 @@ fn main() {
 
     let mut solver2 = Rkf78::new(Tolerances::new(1e-12, 1e-12));
     let _ = solver2
-        .integrate_to_event(&sys, &event, &config_continue, 0.0, &y0, 5.0 * period, 10.0)
+        .integrate_to_event(
+            &sys,
+            &event,
+            &config_continue,
+            &IntegrationConfig::new(0.0, 5.0 * period, 10.0),
+            &y0,
+        )
         .unwrap();
 
     println!("Part 2: EventAction::Continue (5 orbits)");

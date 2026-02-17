@@ -8,7 +8,7 @@
 //! Run with:
 //!   cargo run --example two_body_orbit
 
-use rkf78::{OdeSystem, Rkf78, Tolerances};
+use rkf78::{IntegrationConfig, OdeSystem, Rkf78, Tolerances};
 
 /// Keplerian two-body problem: d²r/dt² = -μ r / |r|³
 ///
@@ -63,7 +63,9 @@ fn main() {
     let mut solver = Rkf78::new(tol);
 
     let e0 = energy(mu, &y0);
-    let (tf, yf) = solver.integrate(&sys, 0.0, &y0, period, 10.0).unwrap();
+    let (tf, yf) = solver
+        .integrate(&sys, &IntegrationConfig::new(0.0, period, 10.0), &y0)
+        .unwrap();
     let ef = energy(mu, &yf);
 
     let pos_err =
