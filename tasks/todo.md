@@ -486,3 +486,67 @@ Prepared crate for crates.io publishing: license set to MIT-only, repository URL
 - Clippy clean
 - Formatting clean
 - `cargo publish --dry-run` succeeds (26 files, 235 KB)
+
+---
+
+# v0.2.0 API Refactor
+
+## Phase 0: Visibility and Hygiene
+- [x] Make `BrentSolver`, `BrentError`, `sign_change_detected` → `pub(crate)`
+- [x] Remove `BrentSolver`, `BrentError` from `lib.rs` re-exports
+- [x] Make `coefficients` module `pub(crate)`
+- [x] Remove `set_step_limits` method
+- [x] Remove `_t_prev` / `_y_prev` dead variables in `integrate_to_event`
+- [x] Add `#[must_use]` to `integrate()`, `integrate_to_event()` (removed redundant `step()` per clippy)
+- [x] Add `Copy` derive to `Tolerances`, `StepController`, `StepResult`, `EventDirection`, `EventAction`, `EventConfig`, `EventResult`, `Stats`
+- [x] Add `Display` impl for `Stats`
+- [x] Make `StepController` `pub(crate)` (removed from lib.rs re-exports)
+
+## Phase 1: Scalar/Float Traits + Generic Solver
+- [ ] Create `src/scalar.rs` with `Float` and `Scalar` traits + f32/f64 impls
+- [ ] Generify `OdeSystem`, `Tolerances`, `StepController`, `Rkf78`, `StepResult`
+- [ ] Generify `IntegrationResult`, `IntegrationError`
+- [ ] Generify `EventFunction`, `EventConfig`, `EventResult`, `BrentSolver`
+- [ ] Convert inner loops to use `mul_real` and `from_f64`
+- [ ] Update all tests, examples, benchmarks for new type params
+- [ ] Add f32 tests (harmonic oscillator, two-body energy)
+
+## Phase 2: Config Struct + h0 Convention + Fluent Setters
+- [ ] Create `IntegrationConfig<R>` with fluent setters
+- [ ] Move h_min/h_max/max_steps from `Rkf78` to `IntegrationConfig`
+- [ ] Add fluent setter `with_controller` on `Rkf78`
+- [ ] Add fluent setters on `StepController` (make pub again)
+- [ ] Change h0 sign convention (magnitude only, direction inferred)
+- [ ] Update `integrate()` and `integrate_to_event()` signatures
+- [ ] Update all call sites
+
+## Phase 3: StepObserver Trait
+- [ ] Add `StepObserver<T, N>` trait + no-op impl for `()`
+- [ ] Add `integrate_with_observer()` method
+- [ ] Refactor `integrate()` to use observer internally
+- [ ] Add observer test
+
+## Phase 4: Dense Output
+- [ ] Create `src/solution.rs` with `Solution<T, N>` struct
+- [ ] Implement Hermite `eval(t)` and `eval_derivative(t)`
+- [ ] Extract shared Hermite interpolation from `find_event_root`
+- [ ] Add `integrate_dense()` method (1 extra RHS per accepted step)
+- [ ] Add dense output tests
+
+## Phase 5: Simultaneous Events
+- [ ] Add `MultiEventFunction<T, N, M>` trait
+- [ ] Add `event_index` field to `EventResult`
+- [ ] Implement multi-event detection (earliest root wins)
+- [ ] Add `integrate_with_multi_events()` method
+- [ ] Change event return to `(IntegrationResult, Vec<EventResult>)`
+- [ ] Remove `collected_events` from `Rkf78` struct
+- [ ] Add multi-event tests
+
+## Phase 6: Documentation
+- [ ] Update README with "Why RKF78?" positioning
+- [ ] Update README code examples for v0.2.0 API
+- [ ] Update `src/lib.rs` crate docs
+- [ ] Update `CLAUDE.md`
+- [ ] Bump version to `0.2.0`
+- [ ] Add `complex` feature flag in Cargo.toml
+- [ ] Update `notes/rkf78_design.md`

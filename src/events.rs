@@ -77,7 +77,7 @@ pub enum EventAction {
 }
 
 /// Configuration for an event
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct EventConfig {
     /// Which direction of zero-crossing to detect
     pub direction: EventDirection,
@@ -101,7 +101,7 @@ impl Default for EventConfig {
 }
 
 /// Result of event detection
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct EventResult<const N: usize> {
     /// Time at which the event occurred
     pub t: f64,
@@ -120,7 +120,7 @@ pub struct EventResult<const N: usize> {
 ///
 /// Reference: Brent, R.P. (1973). "Algorithms for Minimization without
 /// Derivatives". Prentice-Hall.
-pub struct BrentSolver {
+pub(crate) struct BrentSolver {
     /// Tolerance for convergence
     pub tol: f64,
     /// Maximum iterations
@@ -258,7 +258,7 @@ impl BrentSolver {
 
 /// Errors from Brent's method
 #[derive(Debug, Clone)]
-pub enum BrentError {
+pub(crate) enum BrentError {
     /// The root is not bracketed by the given interval
     NotBracketed {
         /// Left endpoint
@@ -309,7 +309,7 @@ impl std::fmt::Display for BrentError {
 impl std::error::Error for BrentError {}
 
 /// Check if a sign change occurred in the specified direction
-pub fn sign_change_detected(g_old: f64, g_new: f64, direction: EventDirection) -> bool {
+pub(crate) fn sign_change_detected(g_old: f64, g_new: f64, direction: EventDirection) -> bool {
     if g_old * g_new > 0.0 {
         // No sign change
         return false;

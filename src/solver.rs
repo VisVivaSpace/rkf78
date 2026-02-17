@@ -23,7 +23,8 @@ pub trait OdeSystem<const N: usize> {
 }
 
 /// Integration result from a single step
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
+#[must_use]
 pub struct StepResult<const N: usize> {
     /// New state after the step (8th order solution)
     pub y: [f64; N],
@@ -38,22 +39,32 @@ pub struct StepResult<const N: usize> {
 }
 
 /// Integration statistics for diagnostics
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Stats {
     /// Total number of function evaluations
     pub fn_evals: u64,
     /// Number of accepted steps
     pub accepted_steps: u64,
-    /// Number of rejected steps  
+    /// Number of rejected steps
     pub rejected_steps: u64,
+}
+
+impl std::fmt::Display for Stats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "fn_evals: {}, accepted: {}, rejected: {}",
+            self.fn_evals, self.accepted_steps, self.rejected_steps
+        )
+    }
 }
 
 /// Step-size controller using an I-controller
 ///
 /// h_new = safety * h * error^(-1/p)
 /// where p = 8 for RKF78
-#[derive(Clone)]
-pub struct StepController {
+#[derive(Clone, Copy)]
+pub(crate) struct StepController {
     /// Safety factor (0.8-0.9 typical)
     pub safety: f64,
     /// Maximum growth factor per step
@@ -90,7 +101,7 @@ impl StepController {
 /// Tolerance specification for error control
 ///
 /// Error is computed as: |y8 - y7| / (atol + rtol * |y8|)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Tolerances<const N: usize> {
     /// Absolute tolerance per component
     pub atol: [f64; N],
@@ -175,12 +186,6 @@ impl<const N: usize> Rkf78<N> {
         }
     }
 
-    /// Set minimum and maximum step sizes
-    pub fn set_step_limits(&mut self, h_min: f64, h_max: f64) {
-        self.h_min = h_min;
-        self.h_max = h_max;
-    }
-
     /// Perform a single integration step
     ///
     /// This computes the 13 stages, forms the 8th and 7th order solutions,
@@ -239,6 +244,7 @@ impl<const N: usize> Rkf78<N> {
     /// # Returns
     /// * `Ok((t_final, y_final))` on success
     /// * `Err(IntegrationError)` on failure
+    #[must_use = "integration result contains the final state"]
     pub fn integrate<S: OdeSystem<N>>(
         &mut self,
         sys: &S,
@@ -463,6 +469,7 @@ impl<const N: usize> Rkf78<N> {
     /// let result = solver.integrate_to_event(&sys, &event, &config, t0, &y0, tf, h0);
     /// ```
     #[allow(clippy::too_many_arguments)]
+    #[must_use = "integration result contains the final state or event"]
     pub fn integrate_to_event<S, E>(
         &mut self,
         sys: &S,
@@ -491,10 +498,6 @@ impl<const N: usize> Rkf78<N> {
 
         // Evaluate initial event function
         let mut g_prev = event.eval(t, &y);
-
-        // Store previous accepted state for interpolation
-        let mut _t_prev = t;
-        let mut _y_prev = y;
 
         let mut step_count = 0u64;
 
@@ -525,8 +528,6 @@ impl<const N: usize> Rkf78<N> {
                             // Record event, accept the full step (not the event point)
                             // so we move past the zero crossing and don't re-detect it
                             self.collected_events.push(event_result);
-                            _t_prev = t;
-                            _y_prev = y;
                             t = result.t;
                             y = result.y;
                             g_prev = g_new;
@@ -537,8 +538,6 @@ impl<const N: usize> Rkf78<N> {
                 }
 
                 // Update state
-                _t_prev = t;
-                _y_prev = y;
                 t = result.t;
                 y = result.y;
                 if !y.iter().all(|v| v.is_finite()) {

@@ -12,9 +12,11 @@
 pub const STAGES: usize = 13;
 
 /// Order of the higher-order method (used for advancing the solution)
+#[allow(dead_code)]
 pub const ORDER: u8 = 8;
 
 /// Order of the embedded method (used for error estimation)
+#[allow(dead_code)]
 pub const EMBEDDED_ORDER: u8 = 7;
 
 /// Node coefficients (c_i) - the points at which f(t,y) is evaluated
@@ -260,6 +262,7 @@ pub const B: [f64; STAGES] = [
 /// The 7th-order solution uses stages 0, 5-12.
 ///
 /// From NASA TR R-287, Table X (c_hat values, bottom row)
+#[allow(dead_code)]
 pub const B_HAT: [f64; STAGES] = [
     0.0,          // b_hat[0]
     0.0,          // b_hat[1]

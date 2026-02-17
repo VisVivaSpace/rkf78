@@ -127,16 +127,13 @@
 #![deny(missing_docs)]
 #![deny(unsafe_code)]
 
-pub mod coefficients;
+pub(crate) mod coefficients;
 pub mod events;
 #[cfg(feature = "gpu")]
 pub mod gpu;
 pub mod solver;
 
-pub use events::{
-    BrentError, BrentSolver, EventAction, EventConfig, EventDirection, EventFunction, EventResult,
-};
+pub use events::{EventAction, EventConfig, EventDirection, EventFunction, EventResult};
 pub use solver::{
-    IntegrationError, IntegrationResult, OdeSystem, Rkf78, Stats, StepController, StepResult,
-    Tolerances,
+    IntegrationError, IntegrationResult, OdeSystem, Rkf78, Stats, StepResult, Tolerances,
 };
