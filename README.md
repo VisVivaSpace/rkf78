@@ -5,25 +5,25 @@ A high-precision Runge-Kutta-Fehlberg 7(8) ODE integrator in Rust for spacecraft
 [![Crates.io](https://img.shields.io/crates/v/rkf78.svg)](https://crates.io/crates/rkf78)
 [![docs.rs](https://docs.rs/rkf78/badge.svg)](https://docs.rs/rkf78)
 
-## Features
+## Why RKF78?
 
-- **13-stage embedded RK7(8) pair** — 8th-order solution with 7th-order error estimation
-- **Adaptive step-size control** — I-controller with safety factor, bounded growth
-- **Event detection** — Sign-change monitoring with Brent's method root-finding
-- **Zero runtime dependencies** — No external linear algebra or math libraries
-- **Const-generic state dimension** — Compile-time optimization, no heap allocation during integration
-- **GPU batch propagation** — Parallel trajectory integration on the GPU via `wgpu` (optional `gpu` feature)
-- **NASA heritage coefficients** — From NASA TR R-287, Table X (Fehlberg, 1968)
+- **Zero runtime dependencies** — Unique in the Rust ODE ecosystem. No nalgebra, no BLAS, no math libraries.
+- **Const-generic `[T; N]` arrays** — Compile-time state dimension, zero heap allocation during integration.
+- **Generic over f32/f64** — One codebase for CPU (`f64`) and GPU (`f32`).
+- **NASA-heritage coefficients** — From the original 1968 Fehlberg paper (NASA TR R-287).
+- **Sophisticated event detection** — Brent's method + Hermite cubic interpolation, simultaneous multi-event support, Stop/Continue actions.
+- **Dense output** — Hermite cubic interpolation between steps for continuous trajectory evaluation.
+- **GPU batch propagation** — Thousands of trajectories in parallel via `wgpu` compute shaders.
 
 ## Quick Start
 
 ```rust
-use rkf78::{Rkf78, OdeSystem, Tolerances};
+use rkf78::{Rkf78, OdeSystem, Tolerances, IntegrationConfig};
 
 // Define your ODE system: y'' + y = 0 (harmonic oscillator)
 struct HarmonicOscillator { omega: f64 }
 
-impl OdeSystem<2> for HarmonicOscillator {
+impl OdeSystem<f64, 2> for HarmonicOscillator {
     fn rhs(&self, _t: f64, y: &[f64; 2], dydt: &mut [f64; 2]) {
         dydt[0] = y[1];
         dydt[1] = -self.omega * self.omega * y[0];
@@ -35,7 +35,8 @@ let tol = Tolerances::new(1e-12, 1e-12);
 let mut solver = Rkf78::new(tol);
 
 let y0 = [1.0, 0.0];  // y(0) = 1, y'(0) = 0
-let (tf, yf) = solver.integrate(&sys, 0.0, &y0, 10.0, 0.1).unwrap();
+let config = IntegrationConfig::new(0.0, 10.0, 0.1);
+let (tf, yf) = solver.integrate(&sys, &config, &y0).unwrap();
 ```
 
 ## Event Detection
@@ -43,11 +44,11 @@ let (tf, yf) = solver.integrate(&sys, 0.0, &y0, 10.0, 0.1).unwrap();
 Detect when a user-defined function crosses zero during integration — essential for finding periapsis, eclipse boundaries, altitude crossings, etc.
 
 ```rust
-use rkf78::{EventFunction, EventConfig, EventDirection, IntegrationResult};
+use rkf78::{EventFunction, EventConfig, EventDirection, IntegrationResult, IntegrationConfig};
 
 struct ThresholdCrossing { value: f64 }
 
-impl EventFunction<2> for ThresholdCrossing {
+impl EventFunction<f64, 2> for ThresholdCrossing {
     fn eval(&self, _t: f64, y: &[f64; 2]) -> f64 {
         y[0] - self.value
     }
@@ -59,13 +60,29 @@ let config = EventConfig {
     ..Default::default()
 };
 
-match solver.integrate_to_event(&sys, &event, &config, 0.0, &y0, 10.0, 0.1).unwrap() {
+let int_config = IntegrationConfig::new(0.0, 10.0, 0.1);
+let (result, _collected) = solver.integrate_to_event(&sys, &event, &config, &int_config, &y0).unwrap();
+match result {
     IntegrationResult::Event(ev) => println!("Event at t = {:.6}", ev.t),
     IntegrationResult::Completed { t, .. } => println!("No event, reached t = {}", t),
 }
 ```
 
+For simultaneous events, implement `MultiEventFunction<T, N, M>` and use `integrate_with_multi_events()`.
+
 Events can also be configured with `EventAction::Continue` to record all crossings without stopping.
+
+## Dense Output
+
+Record the full trajectory and evaluate at arbitrary times:
+
+```rust
+let (tf, yf, solution) = solver.integrate_dense(&sys, &config, &y0).unwrap();
+
+// Evaluate anywhere in [t0, tf] via Hermite cubic interpolation
+let y_mid = solution.eval(5.0).unwrap();
+let dy_mid = solution.eval_derivative(5.0).unwrap();
+```
 
 ## Tolerance Selection
 
@@ -87,7 +104,7 @@ For a full explanation of the mathematics — Butcher tableau, error estimation,
 
 ```bash
 cargo build            # Build the crate
-cargo test             # Run all tests (56 tests)
+cargo test             # Run all tests (~70 tests)
 cargo test --features gpu  # Include GPU tests (requires GPU)
 cargo bench            # Run criterion benchmarks
 cargo clippy           # Lint
@@ -112,7 +129,7 @@ See [`examples/gpu_two_body.rs`](examples/gpu_two_body.rs) for a complete exampl
 
 | Example | Run command | Description |
 |---------|-------------|-------------|
-| [Harmonic Oscillator](examples/harmonic_oscillator.rs) | `cargo run --example harmonic_oscillator` | Basic `OdeSystem<2>` usage, comparison with exact solution |
+| [Harmonic Oscillator](examples/harmonic_oscillator.rs) | `cargo run --example harmonic_oscillator` | Basic `OdeSystem<f64, 2>` usage, comparison with exact solution |
 | [Two-Body Orbit](examples/two_body_orbit.rs) | `cargo run --example two_body_orbit` | Keplerian orbit with per-component tolerances and energy conservation |
 | [Event Detection](examples/event_detection.rs) | `cargo run --example event_detection` | Periapsis detection with `Stop` and `Continue` event actions |
 | [GPU Two-Body](examples/gpu_two_body.rs) | `cargo run --features gpu --example gpu_two_body` | GPU batch propagation of multiple orbits |

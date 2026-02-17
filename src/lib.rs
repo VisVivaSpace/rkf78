@@ -7,11 +7,13 @@
 //!
 //! - 13-stage embedded RK7(8) pair providing 8th-order accuracy
 //! - Adaptive step-size control with 7th-order error estimation
-//! - **Event finding** with Brent's method for precise root location
-//! - Based on NASA TR R-287 (Erwin Fehlberg, 1968)
-//! - Minimal dependencies (no external linear algebra required)
-//! - **GPU batch propagation** via `wgpu` compute shaders (optional `gpu` feature, `f32` precision)
-//! - Designed for integration into larger astrodynamics libraries
+//! - Generic over `f32`/`f64` via [`Float`]/[`Scalar`] traits
+//! - **Event finding** with Brent's method + Hermite cubic interpolation
+//! - **Simultaneous multi-event** detection via [`MultiEventFunction`]
+//! - **Dense output** via [`Solution`] with Hermite interpolation
+//! - **Step observer** callback for trajectory inspection
+//! - **GPU batch propagation** via `wgpu` compute shaders (optional `gpu` feature, `f32`)
+//! - Zero runtime dependencies — based on NASA TR R-287 (Fehlberg, 1968)
 //!
 //! ## Basic Usage
 //!
@@ -34,7 +36,8 @@
 //! let mut solver = Rkf78::new(tol);
 //!
 //! let y0 = [1.0, 0.0];  // Initial conditions
-//! let (tf, yf) = solver.integrate(&sys, &IntegrationConfig::new(0.0, 10.0, 0.1), &y0).unwrap();
+//! let config = IntegrationConfig::new(0.0, 10.0, 0.1);
+//! let (tf, yf) = solver.integrate(&sys, &config, &y0).unwrap();
 //! ```
 //!
 //! ## Event Finding
@@ -49,9 +52,8 @@
 //! - Altitude threshold crossings
 //!
 //! ```rust,ignore
-//! use rkf78::{Rkf78, OdeSystem, Tolerances, EventFunction, EventConfig, EventDirection, IntegrationResult};
+//! use rkf78::{EventFunction, EventConfig, EventDirection, IntegrationResult, IntegrationConfig};
 //!
-//! // Define an event (e.g., detect when y[0] crosses a threshold)
 //! struct ThresholdCrossing { value: f64 }
 //!
 //! impl EventFunction<f64, 2> for ThresholdCrossing {
@@ -60,24 +62,31 @@
 //!     }
 //! }
 //!
-//! // Configure event detection
 //! let event = ThresholdCrossing { value: 0.5 };
 //! let config = EventConfig {
-//!     direction: EventDirection::Falling,  // Detect when y[0] decreases through 0.5
+//!     direction: EventDirection::Falling,
 //!     ..Default::default()
 //! };
 //!
-//! // Integrate with event detection (sys implements OdeSystem<f64, 2>)
 //! let int_config = IntegrationConfig::new(t0, tf, h0);
-//! match solver.integrate_to_event(&sys, &event, &config, &int_config, &y0) {
-//!     Ok(IntegrationResult::Event(ev)) => {
-//!         println!("Event at t = {}, y = {:?}", ev.t, ev.y);
-//!     }
-//!     Ok(IntegrationResult::Completed { t, y }) => {
-//!         println!("Reached tf = {} without event", t);
-//!     }
-//!     Err(e) => eprintln!("Error: {}", e),
+//! let (result, _collected) = solver.integrate_to_event(&sys, &event, &config, &int_config, &y0)?;
+//! match result {
+//!     IntegrationResult::Event(ev) => println!("Event at t = {}", ev.t),
+//!     IntegrationResult::Completed { t, .. } => println!("Reached tf = {}", t),
 //! }
+//! ```
+//!
+//! For simultaneous events, implement [`MultiEventFunction`] and use
+//! [`Rkf78::integrate_with_multi_events()`].
+//!
+//! ## Dense Output
+//!
+//! Record the full trajectory and evaluate at arbitrary times:
+//!
+//! ```rust,ignore
+//! let (tf, yf, solution) = solver.integrate_dense(&sys, &config, &y0)?;
+//! let y_mid = solution.eval(5.0).unwrap();      // Hermite cubic interpolation
+//! let dy_mid = solution.eval_derivative(5.0).unwrap();
 //! ```
 //!
 //! ## Tolerance Selection
@@ -90,19 +99,6 @@
 //!
 //! For energy conservation tests with RKF78 at `tol=1e-12`:
 //! - Energy drift should be `< 1e-10` over one orbital period
-//!
-//! ## Algorithm Details
-//!
-//! For a detailed explanation of the RKF7(8) mathematics — Butcher tableau,
-//! error estimation, adaptive step-size control, and Brent's method for event
-//! detection — see `docs/algorithm.md` in the repository.
-//!
-//! ## Integration with Wisdom-Holman
-//!
-//! This integrator is designed to work as the perturbation integrator
-//! in a Wisdom-Holman style mixed-variable symplectic scheme. In that
-//! context, RKF78 handles the perturbation "kicks" while the Keplerian
-//! motion is solved analytically.
 //!
 //! ## GPU Batch Propagation
 //!

@@ -27,14 +27,17 @@ cargo bench                          # Run benchmarks (criterion)
 
 ## Architecture
 
-Four source modules, all using const-generic `<const N: usize>` for compile-time state dimension:
+Six source modules, generic over scalar type `T: Scalar` with const-generic `<const N: usize>` for compile-time state dimension:
 
 - **`src/lib.rs`** — Public API re-exports and crate-level documentation
+- **`src/scalar.rs`** — `Float` and `Scalar` traits with macro impls for `f32`/`f64`
 - **`src/coefficients.rs`** — Butcher tableau constants (`C`, `A`, `B`, `B_HAT`, `B_ERR`) from NASA TR R-287 Table X
-- **`src/solver.rs`** — Core integrator: `Rkf78<N>`, `OdeSystem<N>` trait, `Tolerances<N>`, `StepController`, adaptive stepping, `integrate()` and `integrate_to_event()`
-- **`src/events.rs`** — Event detection: `EventFunction<N>` trait, `BrentSolver`, `EventDirection`, `EventConfig`, sign-change monitoring with root-finding
+- **`src/solver.rs`** — Core integrator: `Rkf78<T, N>`, `OdeSystem<T, N>` trait, `Tolerances<R, N>`, `IntegrationConfig<R>`, `StepController<R>`, `StepObserver<T, N>` trait, adaptive stepping, `integrate()`, `integrate_dense()`, `integrate_to_event()`, `integrate_with_multi_events()`
+- **`src/events.rs`** — Event detection: `EventFunction<T, N>` and `MultiEventFunction<T, N, M>` traits, `EventDirection`, `EventConfig<R>`, Brent's root-finding, Hermite cubic interpolation helpers
+- **`src/solution.rs`** — Dense output: `Solution<T, N>` with Hermite cubic interpolation for evaluating state and derivatives at arbitrary times
+- **`src/gpu/`** — Optional GPU batch propagation via `wgpu` compute shaders (`f32` only, `gpu` feature)
 
-The user implements `OdeSystem<N>` (provides `rhs(t, y, dydt)`) and optionally `EventFunction<N>` (provides `eval(t, y) -> f64`). The solver uses pre-allocated `[[f64; N]; 13]` workspace to avoid heap allocation during integration.
+The user implements `OdeSystem<T, N>` (provides `rhs(t, y, dydt)`) and optionally `EventFunction<T, N>` or `MultiEventFunction<T, N, M>`. The solver uses pre-allocated `[[T; N]; STAGES]` workspace to avoid heap allocation during integration. Time, tolerances, and step sizes use `T::Real` (always real-valued); state components use `T`.
 
 ## Skills
 
@@ -53,7 +56,7 @@ These skills are available:
 
 ## Key Patterns
 
-1. **Error handling**: `IntegrationError` enum (`StepSizeTooSmall`, `MaxStepsExceeded`, `EventFindingFailed`) with `Result<T, IntegrationError>` returns. `BrentError` for root-finding failures.
+1. **Error handling**: `IntegrationError<R: Float>` enum (`StepSizeTooSmall`, `MaxStepsExceeded`, `EventFindingFailed`) with `Result<T, IntegrationError<R>>` returns. `BrentSolver` and `BrentError` are `pub(crate)` internals.
 2. **Tolerance rule**: Non-iterative, deterministic computations (closed-form formulas, algebraic identities, pure arithmetic) must assert within floating-point precision (1e-10 to 1e-14). Only use loose tolerances for inherently approximate operations (iterative solvers, interpolated ephemeris data, coordinate conversions through trig functions) — and document why.
 3. **Step control**: I-controller with safety factor 0.9, growth bounded [0.2×, 5.0×], exponent 1/8 for 8th-order method.
 
