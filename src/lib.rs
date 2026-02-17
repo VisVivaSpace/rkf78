@@ -1,7 +1,8 @@
 //! # RKF78: Runge-Kutta-Fehlberg 7(8) Integrator
 //!
-//! A high-precision ODE integrator for spacecraft trajectory propagation
-//! and other astrodynamics applications.
+//! A high-precision ODE integrator for smooth, non-stiff systems.
+//! Widely used in orbital mechanics, control systems, oscillator analysis,
+//! and anywhere high-order accuracy with adaptive stepping is needed.
 //!
 //! ## Features
 //!
@@ -43,13 +44,12 @@
 //! ## Event Finding
 //!
 //! The integrator can detect when a user-defined event function crosses zero,
-//! stopping precisely at that point. This is essential for astrodynamics
-//! applications like detecting:
+//! stopping precisely at that point. Common applications include:
 //!
-//! - Periapsis/apoapsis (radial velocity = 0)
-//! - Sphere of influence crossings
-//! - Eclipse entry/exit
-//! - Altitude threshold crossings
+//! - Threshold crossings (state variable reaches a target value)
+//! - Periodic event detection (zero-crossings of oscillating quantities)
+//! - Boundary detection (system enters or exits a region)
+//! - Terminal conditions (stop when a criterion is met)
 //!
 //! ```rust,ignore
 //! use rkf78::{EventFunction, EventConfig, EventDirection, IntegrationResult, IntegrationConfig};
@@ -91,21 +91,19 @@
 //!
 //! ## Tolerance Selection
 //!
-//! Following NASA-STD-7009 guidance for numerical integration:
+//! - **High precision**: `atol = 1e-12`, `rtol = 1e-12` — reference solutions
+//! - **Standard**: `atol = 1e-10`, `rtol = 1e-10` — general engineering
+//! - **Fast**: `atol = 1e-6`, `rtol = 1e-6` — quick surveys and parameter sweeps
 //!
-//! - **Position (km)**: `atol ≈ 1e-12 km` for high-precision orbit determination
-//! - **Velocity (km/s)**: `atol ≈ 1e-15 km/s` to match position precision
-//! - **Relative tolerance**: Typically `1e-12` to `1e-14`
-//!
-//! For energy conservation tests with RKF78 at `tol=1e-12`:
-//! - Energy drift should be `< 1e-10` over one orbital period
+//! For mixed-unit state vectors, use per-component tolerances via
+//! [`Tolerances::with_components()`].
 //!
 //! ## GPU Batch Propagation
 //!
 //! With the `gpu` feature enabled, the crate provides [`gpu::GpuBatchPropagator`] for
 //! propagating thousands of trajectories in parallel on the GPU via `wgpu` compute shaders.
 //! The GPU solver uses `f32` precision (vs `f64` on CPU), making it suitable for Monte Carlo
-//! studies, conjunction screening, and trade studies where throughput matters more than
+//! studies, parameter sweeps, and trade studies where throughput matters more than
 //! last-digit precision. Users supply their own WGSL force model at construction time.
 //!
 //! ## References

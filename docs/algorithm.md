@@ -224,13 +224,13 @@ When a sign change is detected in the interval $[t_n, t_{n+1}]$, **Brent's metho
 
 The algorithm automatically selects the most appropriate technique at each iteration and falls back to bisection when the faster methods would be unreliable. Convergence tolerance defaults to $10^{-12}$ with a maximum of 50 iterations.
 
-During root-finding, the state at intermediate times is obtained by **linear interpolation** between the bracketing states $(t_n, y_n)$ and $(t_{n+1}, y_{n+1})$. This is adequate when adaptive stepping keeps the step sizes reasonable, but could be improved with dense output (Hermite interpolation using the RK stages) in a future version.
+During root-finding, the state at intermediate times is obtained by **Hermite cubic interpolation** using the bracketing states and their derivatives $(t_n, y_n, f_n)$ and $(t_{n+1}, y_{n+1}, f_{n+1})$. This provides O(h^4) local accuracy in the interpolated state.
 
 ### EventAction
 
 When an event is detected:
 - **`Stop`** (default): integration terminates and returns the event time and state
-- **`Continue`**: the event is recorded in `collected_events` and integration continues past the zero crossing
+- **`Continue`**: the event is recorded and integration continues past the zero crossing. All collected events are returned alongside the `IntegrationResult`.
 
 ---
 
@@ -238,21 +238,21 @@ When an event is detected:
 
 ### Const-Generic Design
 
-The integrator is parameterized by state dimension `N` at compile time:
+The integrator is parameterized by scalar type `T` and state dimension `N` at compile time:
 
 ```rust
-pub struct Rkf78<const N: usize> { ... }
-pub trait OdeSystem<const N: usize> { ... }
+pub struct Rkf78<T: Scalar, const N: usize> { ... }
+pub trait OdeSystem<T: Scalar, const N: usize> { ... }
 ```
 
-This allows the compiler to optimize loop bounds, unroll inner loops, and avoid heap allocation for the state vector.
+This allows the compiler to optimize loop bounds, unroll inner loops, and avoid heap allocation for the state vector. The `Scalar`/`Float` traits enable the same code to work with both `f32` and `f64`.
 
 ### Pre-Allocated Workspace
 
 The 13 stage vectors are stored as a fixed-size array in the solver struct:
 
 ```rust
-k: [[f64; N]; STAGES],  // 13 × N workspace
+k: [[T; N]; STAGES],  // 13 × N workspace
 ```
 
 No heap allocation occurs during integration (except when collecting events with `EventAction::Continue`). This is important for real-time and embedded applications.

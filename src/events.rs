@@ -9,14 +9,12 @@
 //! changes sign (crosses zero), the integrator uses Brent's method to
 //! find the precise time of the zero crossing.
 //!
-//! # Common Applications in Astrodynamics
+//! # Common Applications
 //!
-//! - Periapsis/apoapsis detection (radial velocity = 0)
-//! - Sphere of influence crossing
-//! - Eclipse entry/exit
-//! - Ground track crossing (ascending/descending node)
-//! - Altitude threshold crossing
-//! - Conjunction/opposition detection
+//! - State variable crossing a threshold (temperature, concentration, altitude)
+//! - Periodic event detection (zero-crossings of oscillating quantities)
+//! - Boundary detection (entering or exiting a region)
+//! - Terminal conditions (stop when a system reaches a target state)
 
 use crate::scalar::{Float, Scalar};
 

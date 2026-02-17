@@ -1,7 +1,7 @@
 //! Runge-Kutta-Fehlberg 7(8) Integrator
 //!
 //! A 13-stage embedded RK7(8) pair for high-precision integration of ODEs.
-//! Designed for spacecraft trajectory propagation and astrodynamics applications.
+//! Generic over f32/f64 with adaptive step-size control and event detection.
 //!
 //! Reference: NASA TR R-287, Erwin Fehlberg, 1968
 
