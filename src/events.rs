@@ -341,6 +341,91 @@ pub(crate) fn sign_change_detected<R: Float>(
     }
 }
 
+/// Hermite cubic interpolation between two endpoints.
+///
+/// Given state and derivative at `t_a` and `t_b`, compute the interpolated
+/// state at time `t` with O(h^4) local accuracy.
+///
+/// # Arguments
+/// * `t_a`, `t_b` — Endpoint times
+/// * `y_a`, `y_b` — States at endpoints
+/// * `f_a`, `f_b` — Derivatives (dy/dt) at endpoints
+/// * `t` — Interpolation time (should be in `[t_a, t_b]`)
+pub(crate) fn hermite_interp<T: Scalar, const N: usize>(
+    t_a: T::Real,
+    t_b: T::Real,
+    y_a: &[T; N],
+    y_b: &[T; N],
+    f_a: &[T; N],
+    f_b: &[T; N],
+    t: T::Real,
+) -> [T; N] {
+    let dt = t_b - t_a;
+    let alpha = (t - t_a) / dt;
+    let a2 = alpha * alpha;
+    let a3 = a2 * alpha;
+
+    let one = T::Real::ONE;
+    let two = T::Real::TWO;
+    let three = T::Real::from_f64(3.0);
+
+    // Hermite basis functions
+    let h00 = one - three * a2 + two * a3; // y_a weight
+    let h10 = alpha - two * a2 + a3; // f_a weight (scaled by dt)
+    let h01 = three * a2 - two * a3; // y_b weight
+    let h11 = -a2 + a3; // f_b weight (scaled by dt)
+
+    let mut y = [T::ZERO; N];
+    for i in 0..N {
+        y[i] = y_a[i].mul_real(h00)
+            + f_a[i].mul_real(h10 * dt)
+            + y_b[i].mul_real(h01)
+            + f_b[i].mul_real(h11 * dt);
+    }
+    y
+}
+
+/// Hermite cubic derivative interpolation between two endpoints.
+///
+/// Given state and derivative at `t_a` and `t_b`, compute the interpolated
+/// derivative at time `t`.
+pub(crate) fn hermite_interp_derivative<T: Scalar, const N: usize>(
+    t_a: T::Real,
+    t_b: T::Real,
+    y_a: &[T; N],
+    y_b: &[T; N],
+    f_a: &[T; N],
+    f_b: &[T; N],
+    t: T::Real,
+) -> [T; N] {
+    let dt = t_b - t_a;
+    let alpha = (t - t_a) / dt;
+    let a2 = alpha * alpha;
+
+    let two = T::Real::TWO;
+    let three = T::Real::from_f64(3.0);
+    let six = T::Real::from_f64(6.0);
+
+    // Derivatives of Hermite basis functions w.r.t. alpha, divided by dt
+    // d(h00)/dt = (-6α + 6α²) / dt
+    // d(h10)/dt = (1 - 4α + 3α²) / dt
+    // d(h01)/dt = (6α - 6α²) / dt
+    // d(h11)/dt = (-2α + 3α²) / dt
+    let dh00 = (-six * alpha + six * a2) / dt;
+    let dh10 = (T::Real::ONE - two * two * alpha + three * a2) / dt;
+    let dh01 = (six * alpha - six * a2) / dt;
+    let dh11 = (-two * alpha + three * a2) / dt;
+
+    let mut dy = [T::ZERO; N];
+    for i in 0..N {
+        dy[i] = y_a[i].mul_real(dh00)
+            + f_a[i].mul_real(dh10 * dt)
+            + y_b[i].mul_real(dh01)
+            + f_b[i].mul_real(dh11 * dt);
+    }
+    dy
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

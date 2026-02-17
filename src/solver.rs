@@ -7,8 +7,8 @@
 
 use crate::coefficients::{A, B, B_ERR, C, STAGES};
 use crate::events::{
-    sign_change_detected, BrentError, BrentSolver, EventAction, EventConfig, EventFunction,
-    EventResult,
+    hermite_interp, sign_change_detected, BrentError, BrentSolver, EventAction, EventConfig,
+    EventFunction, EventResult,
 };
 use crate::scalar::{Float, Scalar};
 
@@ -455,6 +455,95 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
         Ok((t, y))
     }
 
+    /// Integrate from `config.t0` to `config.tf`, recording the full trajectory.
+    ///
+    /// Returns a [`Solution`] that supports Hermite cubic interpolation at
+    /// arbitrary times within the integration span, plus the final `(t, y)`.
+    ///
+    /// **Cost:** One extra RHS evaluation per accepted step (to obtain the
+    /// derivative at the step endpoint for Hermite interpolation). This is
+    /// approximately 7-8% overhead compared to [`integrate()`](Self::integrate).
+    ///
+    /// # Arguments
+    /// * `sys` - The ODE system to integrate
+    /// * `config` - Integration configuration (time span, step size, limits)
+    /// * `y0` - Initial state
+    ///
+    /// # Returns
+    /// * `Ok((t_final, y_final, solution))` on success
+    /// * `Err(IntegrationError)` on failure
+    #[must_use = "integration result contains the trajectory"]
+    #[allow(clippy::type_complexity)]
+    pub fn integrate_dense<S: OdeSystem<T, N>>(
+        &mut self,
+        sys: &S,
+        config: &IntegrationConfig<T::Real>,
+        y0: &[T; N],
+    ) -> Result<(T::Real, [T; N], crate::Solution<T, N>), IntegrationError<T::Real>> {
+        if config.t0 == config.tf {
+            let mut sol = crate::Solution::with_capacity(1);
+            let mut f0 = [T::ZERO; N];
+            sys.rhs(config.t0, y0, &mut f0);
+            self.stats.fn_evals += 1;
+            sol.push(config.t0, *y0, f0);
+            return Ok((config.t0, *y0, sol));
+        }
+        self.validate_inputs(config, y0)?;
+
+        let mut t = config.t0;
+        let mut y = *y0;
+        let direction = (config.tf - config.t0).signum();
+        let mut h = config.h0.clamp(config.h_min, config.h_max) * direction;
+
+        // Record initial point
+        let mut sol = crate::Solution::with_capacity(128);
+        let mut f = [T::ZERO; N];
+        sys.rhs(t, &y, &mut f);
+        self.stats.fn_evals += 1;
+        sol.push(t, y, f);
+
+        let mut step_count = 0u64;
+
+        while (config.tf - t) * direction > config.h_min {
+            if (t + h - config.tf) * direction > T::Real::ZERO {
+                h = config.tf - t;
+            }
+
+            let result = self.step(sys, t, &y, h);
+
+            if result.accepted {
+                t = result.t;
+                y = result.y;
+                if !y.iter().all(|v| v.norm().is_finite()) {
+                    return Err(IntegrationError::NonFiniteState { t });
+                }
+                // Compute derivative at new point for Hermite interpolation
+                sys.rhs(t, &y, &mut f);
+                self.stats.fn_evals += 1;
+                sol.push(t, y, f);
+            }
+
+            h = result.h_next.clamp(config.h_min, config.h_max) * direction;
+
+            step_count += 1;
+            if step_count > config.max_steps {
+                return Err(IntegrationError::MaxStepsExceeded);
+            }
+
+            if !result.accepted
+                && result.h_next <= config.h_min
+                && (config.tf - t) * direction > config.h_min
+            {
+                return Err(IntegrationError::StepSizeTooSmall {
+                    t,
+                    h: result.h_next,
+                });
+            }
+        }
+
+        Ok((t, y, sol))
+    }
+
     /// Compute all 13 stages
     #[allow(clippy::needless_range_loop)]
     fn compute_stages<S: OdeSystem<T, N>>(&mut self, sys: &S, t: T::Real, y: &[T; N], h: T::Real) {
@@ -724,44 +813,16 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
         sys.rhs(t_b, y_b, &mut f_b);
         self.stats.fn_evals += 2;
 
-        let dt = t_b - t_a;
-
-        let three = T::Real::from_f64(3.0);
-        let two = T::Real::TWO;
-        let one = T::Real::ONE;
-
-        // Hermite cubic interpolation: given y_a, f_a, y_b, f_b,
-        // compute y(t) for t in [t_a, t_b] with O(h^4) accuracy.
-        let hermite_interp = |t: T::Real| -> [T; N] {
-            let alpha = (t - t_a) / dt;
-            let a2 = alpha * alpha;
-            let a3 = a2 * alpha;
-            // Hermite basis functions
-            let h00 = one - three * a2 + two * a3; // y_a weight
-            let h10 = alpha - two * a2 + a3; // f_a weight (scaled by dt)
-            let h01 = three * a2 - two * a3; // y_b weight
-            let h11 = -a2 + a3; // f_b weight (scaled by dt)
-
-            let mut y = [T::ZERO; N];
-            for i in 0..N {
-                y[i] = y_a[i].mul_real(h00)
-                    + f_a[i].mul_real(h10 * dt)
-                    + y_b[i].mul_real(h01)
-                    + f_b[i].mul_real(h11 * dt);
-            }
-            y
-        };
-
         // Create a function that evaluates g at time t using Hermite interpolation
         let eval_g = |t: T::Real| {
-            let y_interp = hermite_interp(t);
+            let y_interp = hermite_interp(t_a, t_b, y_a, y_b, &f_a, &f_b, t);
             event.eval(t, &y_interp)
         };
 
         // Find the root
         match solver.find_root(eval_g, t_a, t_b, Some(g_a), Some(g_b)) {
             Ok((t_event, g_value, iterations)) => {
-                let y_event = hermite_interp(t_event);
+                let y_event = hermite_interp(t_a, t_b, y_a, y_b, &f_a, &f_b, t_event);
                 Ok(EventResult {
                     t: t_event,
                     y: y_event,
@@ -781,7 +842,7 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
                 iterations,
             }) => {
                 // Return best estimate even if not fully converged
-                let y_event = hermite_interp(current_best);
+                let y_event = hermite_interp(t_a, t_b, y_a, y_b, &f_a, &f_b, current_best);
                 Ok(EventResult {
                     t: current_best,
                     y: y_event,
