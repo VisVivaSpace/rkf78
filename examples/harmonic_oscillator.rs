@@ -14,7 +14,7 @@ struct HarmonicOscillator {
     omega: f64,
 }
 
-impl OdeSystem<2> for HarmonicOscillator {
+impl OdeSystem<f64, 2> for HarmonicOscillator {
     fn rhs(&self, _t: f64, y: &[f64; 2], dydt: &mut [f64; 2]) {
         dydt[0] = y[1];
         dydt[1] = -self.omega * self.omega * y[0];

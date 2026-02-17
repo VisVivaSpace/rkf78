@@ -17,7 +17,7 @@ struct TwoBody {
     mu: f64,
 }
 
-impl OdeSystem<6> for TwoBody {
+impl OdeSystem<f64, 6> for TwoBody {
     fn rhs(&self, _t: f64, y: &[f64; 6], dydt: &mut [f64; 6]) {
         let r2 = y[0] * y[0] + y[1] * y[1] + y[2] * y[2];
         let r = r2.sqrt();

@@ -6,7 +6,7 @@ struct TwoBody {
     mu: f64,
 }
 
-impl OdeSystem<6> for TwoBody {
+impl OdeSystem<f64, 6> for TwoBody {
     fn rhs(&self, _t: f64, y: &[f64; 6], dydt: &mut [f64; 6]) {
         let r = (y[0] * y[0] + y[1] * y[1] + y[2] * y[2]).sqrt();
         let r3 = r * r * r;
@@ -26,7 +26,7 @@ struct HarmonicOscillator {
     omega: f64,
 }
 
-impl OdeSystem<2> for HarmonicOscillator {
+impl OdeSystem<f64, 2> for HarmonicOscillator {
     fn rhs(&self, _t: f64, y: &[f64; 2], dydt: &mut [f64; 2]) {
         dydt[0] = y[1];
         dydt[1] = -self.omega * self.omega * y[0];

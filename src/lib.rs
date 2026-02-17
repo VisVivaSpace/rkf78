@@ -21,7 +21,7 @@
 //! // Define your ODE system
 //! struct HarmonicOscillator { omega: f64 }
 //!
-//! impl OdeSystem<2> for HarmonicOscillator {
+//! impl OdeSystem<f64, 2> for HarmonicOscillator {
 //!     fn rhs(&self, _t: f64, y: &[f64; 2], dydt: &mut [f64; 2]) {
 //!         dydt[0] = y[1];
 //!         dydt[1] = -self.omega * self.omega * y[0];
@@ -54,7 +54,7 @@
 //! // Define an event (e.g., detect when y[0] crosses a threshold)
 //! struct ThresholdCrossing { value: f64 }
 //!
-//! impl EventFunction<2> for ThresholdCrossing {
+//! impl EventFunction<f64, 2> for ThresholdCrossing {
 //!     fn eval(&self, _t: f64, y: &[f64; 2]) -> f64 {
 //!         y[0] - self.value
 //!     }
@@ -67,7 +67,7 @@
 //!     ..Default::default()
 //! };
 //!
-//! // Integrate with event detection (sys implements OdeSystem<2>)
+//! // Integrate with event detection (sys implements OdeSystem<f64, 2>)
 //! match solver.integrate_to_event(&sys, &event, &config, t0, &y0, tf, h0) {
 //!     Ok(IntegrationResult::Event(ev)) => {
 //!         println!("Event at t = {}, y = {:?}", ev.t, ev.y);
@@ -131,9 +131,11 @@ pub(crate) mod coefficients;
 pub mod events;
 #[cfg(feature = "gpu")]
 pub mod gpu;
+pub mod scalar;
 pub mod solver;
 
 pub use events::{EventAction, EventConfig, EventDirection, EventFunction, EventResult};
+pub use scalar::{Float, Scalar};
 pub use solver::{
     IntegrationError, IntegrationResult, OdeSystem, Rkf78, Stats, StepResult, Tolerances,
 };

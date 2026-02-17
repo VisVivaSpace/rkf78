@@ -16,7 +16,7 @@ struct TwoBody {
     mu: f64,
 }
 
-impl OdeSystem<6> for TwoBody {
+impl OdeSystem<f64, 6> for TwoBody {
     fn rhs(&self, _t: f64, y: &[f64; 6], dydt: &mut [f64; 6]) {
         let r2 = y[0] * y[0] + y[1] * y[1] + y[2] * y[2];
         let r = r2.sqrt();
@@ -36,7 +36,7 @@ impl OdeSystem<6> for TwoBody {
 /// (i.e., radius is at a minimum).
 struct PeriapsisEvent;
 
-impl EventFunction<6> for PeriapsisEvent {
+impl EventFunction<f64, 6> for PeriapsisEvent {
     fn eval(&self, _t: f64, y: &[f64; 6]) -> f64 {
         // r_dot = (r · v) / |r|, but sign is all we need
         y[0] * y[3] + y[1] * y[4] + y[2] * y[5]

@@ -18,6 +18,8 @@
 //! - Altitude threshold crossing
 //! - Conjunction/opposition detection
 
+use crate::scalar::{Float, Scalar};
+
 /// Event function trait
 ///
 /// Implement this trait to define conditions that should stop the integration.
@@ -31,7 +33,7 @@
 ///     earth_radius: f64,
 /// }
 ///
-/// impl EventFunction<6> for AltitudeEvent {
+/// impl EventFunction<f64, 6> for AltitudeEvent {
 ///     fn eval(&self, _t: f64, y: &[f64; 6]) -> f64 {
 ///         let r = (y[0]*y[0] + y[1]*y[1] + y[2]*y[2]).sqrt();
 ///         let altitude = r - self.earth_radius;
@@ -39,7 +41,7 @@
 ///     }
 /// }
 /// ```
-pub trait EventFunction<const N: usize> {
+pub trait EventFunction<T: Scalar, const N: usize> {
     /// Evaluate the event function.
     ///
     /// The integrator will stop when this function crosses zero.
@@ -50,8 +52,8 @@ pub trait EventFunction<const N: usize> {
     /// * `y` - Current state vector
     ///
     /// # Returns
-    /// The value of the event function. Zero indicates the event has occurred.
-    fn eval(&self, t: f64, y: &[f64; N]) -> f64;
+    /// The value of the event function (always real). Zero indicates the event has occurred.
+    fn eval(&self, t: T::Real, y: &[T; N]) -> T::Real;
 }
 
 /// Direction of zero-crossing to detect
@@ -78,23 +80,23 @@ pub enum EventAction {
 
 /// Configuration for an event
 #[derive(Debug, Clone, Copy)]
-pub struct EventConfig {
+pub struct EventConfig<R: Float> {
     /// Which direction of zero-crossing to detect
     pub direction: EventDirection,
     /// What to do when the event is detected
     pub action: EventAction,
     /// Tolerance for root finding (default: 1e-12)
-    pub root_tol: f64,
+    pub root_tol: R,
     /// Maximum iterations for root finding (default: 50)
     pub max_iter: usize,
 }
 
-impl Default for EventConfig {
+impl<R: Float> Default for EventConfig<R> {
     fn default() -> Self {
         Self {
             direction: EventDirection::Any,
             action: EventAction::Stop,
-            root_tol: 1e-12,
+            root_tol: R::from_f64(1e-12),
             max_iter: 50,
         }
     }
@@ -102,13 +104,13 @@ impl Default for EventConfig {
 
 /// Result of event detection
 #[derive(Debug, Clone, Copy)]
-pub struct EventResult<const N: usize> {
+pub struct EventResult<T: Scalar, const N: usize> {
     /// Time at which the event occurred
-    pub t: f64,
+    pub t: T::Real,
     /// State at the event
-    pub y: [f64; N],
+    pub y: [T; N],
     /// Value of the event function at the event (should be ~0)
-    pub g_value: f64,
+    pub g_value: T::Real,
     /// Number of root-finding iterations used
     pub iterations: usize,
 }
@@ -120,25 +122,25 @@ pub struct EventResult<const N: usize> {
 ///
 /// Reference: Brent, R.P. (1973). "Algorithms for Minimization without
 /// Derivatives". Prentice-Hall.
-pub(crate) struct BrentSolver {
+pub(crate) struct BrentSolver<R: Float> {
     /// Tolerance for convergence
-    pub tol: f64,
+    pub tol: R,
     /// Maximum iterations
     pub max_iter: usize,
 }
 
-impl Default for BrentSolver {
+impl<R: Float> Default for BrentSolver<R> {
     fn default() -> Self {
         Self {
-            tol: 1e-12,
+            tol: R::from_f64(1e-12),
             max_iter: 50,
         }
     }
 }
 
-impl BrentSolver {
+impl<R: Float> BrentSolver<R> {
     /// Create a new Brent solver with specified tolerance
-    pub fn new(tol: f64, max_iter: usize) -> Self {
+    pub fn new(tol: R, max_iter: usize) -> Self {
         Self { tol, max_iter }
     }
 
@@ -159,19 +161,19 @@ impl BrentSolver {
     pub fn find_root<F>(
         &self,
         mut f: F,
-        mut a: f64,
-        mut b: f64,
-        fa: Option<f64>,
-        fb: Option<f64>,
-    ) -> Result<(f64, f64, usize), BrentError>
+        mut a: R,
+        mut b: R,
+        fa: Option<R>,
+        fb: Option<R>,
+    ) -> Result<(R, R, usize), BrentError<R>>
     where
-        F: FnMut(f64) -> f64,
+        F: FnMut(R) -> R,
     {
         let mut fa = fa.unwrap_or_else(|| f(a));
         let mut fb = fb.unwrap_or_else(|| f(b));
 
         // Check that root is bracketed
-        if fa * fb > 0.0 {
+        if fa * fb > R::ZERO {
             return Err(BrentError::NotBracketed { a, b, fa, fb });
         }
 
@@ -186,6 +188,9 @@ impl BrentSolver {
         let mut mflag = true;
         let mut d = b - a; // previous step size
 
+        let three = R::from_f64(3.0);
+        let four = R::from_f64(4.0);
+
         for iter in 0..self.max_iter {
             // Ensure |f(a)| >= |f(b)| so b is the best guess
             if fa.abs() < fb.abs() {
@@ -194,7 +199,7 @@ impl BrentSolver {
             }
 
             // Check for convergence
-            if fb == 0.0 || (b - a).abs() <= self.tol {
+            if fb == R::ZERO || (b - a).abs() <= self.tol {
                 return Ok((b, fb, iter + 1));
             }
 
@@ -209,18 +214,18 @@ impl BrentSolver {
                 b - fb * (b - a) / (fb - fa)
             } else {
                 // Degenerate: fa == fb, fall back to bisection
-                (a + b) / 2.0
+                (a + b) / R::TWO
             };
 
             // Conditions for rejecting s and falling back to bisection
-            let mid = (a + b) / 2.0;
+            let mid = (a + b) / R::TWO;
             let use_bisection =
                 // s not between (3a+b)/4 and b
-                (s - (3.0 * a + b) / 4.0) * (s - b) > 0.0
+                (s - (three * a + b) / four) * (s - b) > R::ZERO
                 // |s-b| >= |b-c|/2 when mflag set (last step was bisection)
-                || (mflag && (s - b).abs() >= (b - c).abs() / 2.0)
+                || (mflag && (s - b).abs() >= (b - c).abs() / R::TWO)
                 // |s-b| >= |c-d|/2 when mflag not set
-                || (!mflag && (s - b).abs() >= (c - d).abs() / 2.0)
+                || (!mflag && (s - b).abs() >= (c - d).abs() / R::TWO)
                 // |b-c| < tol when mflag set
                 || (mflag && (b - c).abs() < self.tol)
                 // |c-d| < tol when mflag not set
@@ -239,7 +244,7 @@ impl BrentSolver {
             c = b;
             fc = fb;
 
-            if fa * fs < 0.0 {
+            if fa * fs < R::ZERO {
                 b = s;
                 fb = fs;
             } else {
@@ -258,30 +263,30 @@ impl BrentSolver {
 
 /// Errors from Brent's method
 #[derive(Debug, Clone)]
-pub(crate) enum BrentError {
+pub(crate) enum BrentError<R: Float> {
     /// The root is not bracketed by the given interval
     NotBracketed {
         /// Left endpoint
-        a: f64,
+        a: R,
         /// Right endpoint
-        b: f64,
+        b: R,
         /// Function value at left endpoint
-        fa: f64,
+        fa: R,
         /// Function value at right endpoint
-        fb: f64,
+        fb: R,
     },
     /// Maximum iterations reached without convergence
     MaxIterations {
         /// Best root estimate so far
-        current_best: f64,
+        current_best: R,
         /// Function value at best estimate
-        f_value: f64,
+        f_value: R,
         /// Number of iterations performed
         iterations: usize,
     },
 }
 
-impl std::fmt::Display for BrentError {
+impl<R: Float> std::fmt::Display for BrentError<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BrentError::NotBracketed { a, b, fa, fb } => {
@@ -306,28 +311,32 @@ impl std::fmt::Display for BrentError {
     }
 }
 
-impl std::error::Error for BrentError {}
+impl<R: Float> std::error::Error for BrentError<R> {}
 
 /// Check if a sign change occurred in the specified direction
-pub(crate) fn sign_change_detected(g_old: f64, g_new: f64, direction: EventDirection) -> bool {
-    if g_old * g_new > 0.0 {
+pub(crate) fn sign_change_detected<R: Float>(
+    g_old: R,
+    g_new: R,
+    direction: EventDirection,
+) -> bool {
+    if g_old * g_new > R::ZERO {
         // No sign change
         return false;
     }
 
-    if g_new == 0.0 {
+    if g_new == R::ZERO {
         // New value exactly at zero - consider this a detection
         return true;
     }
 
-    if g_old == 0.0 {
+    if g_old == R::ZERO {
         // Old value exactly at zero - not a new crossing, skip it
         return false;
     }
 
     match direction {
-        EventDirection::Rising => g_old < 0.0 && g_new > 0.0,
-        EventDirection::Falling => g_old > 0.0 && g_new < 0.0,
+        EventDirection::Rising => g_old < R::ZERO && g_new > R::ZERO,
+        EventDirection::Falling => g_old > R::ZERO && g_new < R::ZERO,
         EventDirection::Any => true,
     }
 }
@@ -338,7 +347,7 @@ mod tests {
 
     #[test]
     fn test_brent_simple_root() {
-        let solver = BrentSolver::default();
+        let solver = BrentSolver::<f64>::default();
 
         // f(x) = x^2 - 2, root at sqrt(2) ≈ 1.414
         let result = solver.find_root(|x| x * x - 2.0, 0.0, 2.0, None, None);
@@ -361,7 +370,7 @@ mod tests {
 
     #[test]
     fn test_brent_trigonometric() {
-        let solver = BrentSolver::default();
+        let solver = BrentSolver::<f64>::default();
 
         // f(x) = sin(x), root at π
         let result = solver.find_root(|x| x.sin(), 3.0, 4.0, None, None);
@@ -381,7 +390,7 @@ mod tests {
 
     #[test]
     fn test_brent_not_bracketed() {
-        let solver = BrentSolver::default();
+        let solver = BrentSolver::<f64>::default();
 
         // f(x) = x^2 + 1, no real roots
         let result = solver.find_root(|x| x * x + 1.0, -1.0, 1.0, None, None);
@@ -392,24 +401,28 @@ mod tests {
     #[test]
     fn test_sign_change_detection() {
         // Rising edge
-        assert!(sign_change_detected(-1.0, 1.0, EventDirection::Rising));
-        assert!(!sign_change_detected(1.0, -1.0, EventDirection::Rising));
-        assert!(sign_change_detected(-1.0, 1.0, EventDirection::Any));
+        assert!(sign_change_detected(-1.0_f64, 1.0, EventDirection::Rising));
+        assert!(!sign_change_detected(1.0_f64, -1.0, EventDirection::Rising));
+        assert!(sign_change_detected(-1.0_f64, 1.0, EventDirection::Any));
 
         // Falling edge
-        assert!(sign_change_detected(1.0, -1.0, EventDirection::Falling));
-        assert!(!sign_change_detected(-1.0, 1.0, EventDirection::Falling));
-        assert!(sign_change_detected(1.0, -1.0, EventDirection::Any));
+        assert!(sign_change_detected(1.0_f64, -1.0, EventDirection::Falling));
+        assert!(!sign_change_detected(
+            -1.0_f64,
+            1.0,
+            EventDirection::Falling
+        ));
+        assert!(sign_change_detected(1.0_f64, -1.0, EventDirection::Any));
 
         // No sign change
-        assert!(!sign_change_detected(1.0, 2.0, EventDirection::Any));
-        assert!(!sign_change_detected(-1.0, -2.0, EventDirection::Any));
+        assert!(!sign_change_detected(1.0_f64, 2.0, EventDirection::Any));
+        assert!(!sign_change_detected(-1.0_f64, -2.0, EventDirection::Any));
     }
 
     #[test]
     fn test_brent_root_at_endpoint() {
         // f(x) = x + 1, root at x = -1 (left bracket endpoint)
-        let solver = BrentSolver::default();
+        let solver = BrentSolver::<f64>::default();
         let result = solver.find_root(|x| x + 1.0, -1.0, 1.0, None, None);
         let (root, f_root, _) = result.unwrap();
         assert!(
@@ -425,8 +438,8 @@ mod tests {
         // f(x) = (x-1)^3, triple root at x = 1, bracket [0, 2]
         // Triple roots are hard for Brent because convergence degrades.
         // We accept finding the root within a looser tolerance.
-        let solver = BrentSolver::new(1e-12, 100);
-        let result = solver.find_root(|x| (x - 1.0).powi(3), 0.0, 2.0, None, None);
+        let solver = BrentSolver::<f64>::new(1e-12, 100);
+        let result = solver.find_root(|x| (x - 1.0_f64).powi(3), 0.0, 2.0, None, None);
         let (root, _, _) = result.unwrap();
         assert!(
             (root - 1.0).abs() < 1e-4,
@@ -440,7 +453,7 @@ mod tests {
         // f(x) = x, root at 0, bracket [-1e-15, 1e-15]
         // The bracket is smaller than the default tol (1e-12), so Brent
         // converges immediately and returns the best endpoint.
-        let solver = BrentSolver::default();
+        let solver = BrentSolver::<f64>::default();
         let result = solver.find_root(|x| x, -1e-15, 1e-15, None, None);
         let (root, _, _) = result.unwrap();
         // Root must be within the original bracket
@@ -456,7 +469,7 @@ mod tests {
         // f(x) = (x - 0.5)^3: f(0) = -0.125, f(1) = 0.125
         // Symmetric about the root — early iterations may produce fa == fb.
         // This exercises the degenerate bisection fallback.
-        let solver = BrentSolver::default();
+        let solver = BrentSolver::<f64>::default();
         let result = solver.find_root(|x| (x - 0.5_f64).powi(3), 0.0, 1.0, None, None);
         let (root, _, _) = result.unwrap();
         assert!(
@@ -468,7 +481,7 @@ mod tests {
 
     #[test]
     fn test_brent_cubic() {
-        let solver = BrentSolver::default();
+        let solver = BrentSolver::<f64>::default();
 
         // f(x) = x^3 - x - 2, has a root near 1.52
         let result = solver.find_root(|x| x.powi(3) - x - 2.0, 1.0, 2.0, None, None);
