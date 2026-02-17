@@ -23,6 +23,41 @@ pub trait OdeSystem<T: Scalar, const N: usize> {
     fn rhs(&self, t: T::Real, y: &[T; N], dydt: &mut [T; N]);
 }
 
+/// Observer called after each accepted integration step.
+///
+/// Implement this trait to inspect the integration trajectory without
+/// storing every step. The observer is called only for accepted steps.
+///
+/// # Example
+///
+/// ```ignore
+/// use rkf78::{StepObserver, Scalar};
+///
+/// struct StepCounter(u64);
+///
+/// impl<T: Scalar, const N: usize> StepObserver<T, N> for StepCounter {
+///     fn on_step(&mut self, _t: T::Real, _y: &[T; N], _h: T::Real, _error: T::Real) {
+///         self.0 += 1;
+///     }
+/// }
+/// ```
+pub trait StepObserver<T: Scalar, const N: usize> {
+    /// Called after each accepted step.
+    ///
+    /// # Arguments
+    /// * `t` - Time after the step
+    /// * `y` - State after the step
+    /// * `h` - Step size used (signed)
+    /// * `error` - Normalized error estimate for this step
+    fn on_step(&mut self, t: T::Real, y: &[T; N], h: T::Real, error: T::Real);
+}
+
+/// No-op observer — used by `integrate()` to avoid overhead.
+impl<T: Scalar, const N: usize> StepObserver<T, N> for () {
+    #[inline]
+    fn on_step(&mut self, _t: T::Real, _y: &[T; N], _h: T::Real, _error: T::Real) {}
+}
+
 /// Integration result from a single step
 #[derive(Debug, Clone, Copy)]
 #[must_use]
@@ -335,6 +370,39 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
         config: &IntegrationConfig<T::Real>,
         y0: &[T; N],
     ) -> Result<(T::Real, [T; N]), IntegrationError<T::Real>> {
+        self.integrate_with_observer(sys, config, y0, &mut ())
+    }
+
+    /// Integrate from `config.t0` to `config.tf`, calling `observer` after
+    /// each accepted step.
+    ///
+    /// This is identical to [`integrate()`](Self::integrate) but invokes
+    /// `observer.on_step(t, y, h, error)` after every accepted step. Use
+    /// this to record trajectories, compute running statistics, or implement
+    /// custom termination logic (via panicking — prefer events for that).
+    ///
+    /// # Arguments
+    /// * `sys` - The ODE system to integrate
+    /// * `config` - Integration configuration (time span, step size, limits)
+    /// * `y0` - Initial state
+    /// * `observer` - Called after each accepted step
+    ///
+    /// # Returns
+    /// * `Ok((t_final, y_final))` on success
+    /// * `Err(IntegrationError)` on failure
+    #[must_use = "integration result contains the final state"]
+    #[allow(clippy::type_complexity)]
+    pub fn integrate_with_observer<S, O>(
+        &mut self,
+        sys: &S,
+        config: &IntegrationConfig<T::Real>,
+        y0: &[T; N],
+        observer: &mut O,
+    ) -> Result<(T::Real, [T; N]), IntegrationError<T::Real>>
+    where
+        S: OdeSystem<T, N>,
+        O: StepObserver<T, N>,
+    {
         if config.t0 == config.tf {
             return Ok((config.t0, *y0));
         }
@@ -361,6 +429,7 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
                 if !y.iter().all(|v| v.norm().is_finite()) {
                     return Err(IntegrationError::NonFiniteState { t });
                 }
+                observer.on_step(t, &y, h, result.error);
             }
 
             h = result.h_next.clamp(config.h_min, config.h_max) * direction;
@@ -2125,5 +2194,87 @@ mod tests {
             "f32 energy drift {} exceeds 1e-3",
             rel_energy_error
         );
+    }
+
+    // ─── StepObserver tests ──────────────────────────────────────────────
+
+    /// Simple observer that counts accepted steps and records the last state.
+    struct StepCounter {
+        count: u64,
+        last_t: f64,
+    }
+
+    impl StepCounter {
+        fn new() -> Self {
+            Self {
+                count: 0,
+                last_t: 0.0,
+            }
+        }
+    }
+
+    impl<const N: usize> StepObserver<f64, N> for StepCounter {
+        fn on_step(&mut self, t: f64, _y: &[f64; N], _h: f64, _error: f64) {
+            self.count += 1;
+            self.last_t = t;
+        }
+    }
+
+    #[test]
+    fn test_step_observer_counts_steps() {
+        let sys = HarmonicOscillator { omega: 1.0 };
+        let y0 = [1.0, 0.0];
+        let tf = 2.0 * std::f64::consts::PI;
+
+        let tol = Tolerances::new(1e-12, 1e-12);
+        let mut solver = Rkf78::new(tol);
+        let mut counter = StepCounter::new();
+
+        let (t_final, _) = solver
+            .integrate_with_observer(
+                &sys,
+                &IntegrationConfig::new(0.0, tf, 0.1),
+                &y0,
+                &mut counter,
+            )
+            .unwrap();
+
+        // Observer should have been called at least once
+        assert!(counter.count > 0, "Observer was never called");
+        // Observer count should match solver stats
+        assert_eq!(
+            counter.count, solver.stats.accepted_steps,
+            "Observer count {} != stats accepted_steps {}",
+            counter.count, solver.stats.accepted_steps
+        );
+        // Last observed time should be at t_final
+        assert!(
+            (counter.last_t - t_final).abs() < 1e-10,
+            "Last observed t {} != t_final {}",
+            counter.last_t,
+            t_final
+        );
+    }
+
+    #[test]
+    fn test_step_observer_noop_matches_integrate() {
+        let sys = HarmonicOscillator { omega: 1.0 };
+        let y0 = [1.0, 0.0];
+        let tf = 2.0 * std::f64::consts::PI;
+        let config = IntegrationConfig::new(0.0, tf, 0.1);
+
+        // integrate() delegates to integrate_with_observer(&mut ())
+        // Results should be identical
+        let tol = Tolerances::new(1e-12, 1e-12);
+        let mut solver1 = Rkf78::new(tol);
+        let (t1, y1) = solver1.integrate(&sys, &config, &y0).unwrap();
+
+        let mut solver2 = Rkf78::new(Tolerances::new(1e-12, 1e-12));
+        let (t2, y2) = solver2
+            .integrate_with_observer(&sys, &config, &y0, &mut ())
+            .unwrap();
+
+        assert_eq!(t1, t2);
+        assert_eq!(y1, y2);
     }
 }

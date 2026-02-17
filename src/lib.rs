@@ -139,5 +139,5 @@ pub use events::{EventAction, EventConfig, EventDirection, EventFunction, EventR
 pub use scalar::{Float, Scalar};
 pub use solver::{
     IntegrationConfig, IntegrationError, IntegrationResult, OdeSystem, Rkf78, Stats,
-    StepController, StepResult, Tolerances,
+    StepController, StepObserver, StepResult, Tolerances,
 };
