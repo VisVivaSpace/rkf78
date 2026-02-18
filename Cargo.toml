@@ -1,12 +1,18 @@
 [package]
 name = "rkf78"
 version = "0.2.0"
-edition = "2021"
+edition = "2024"
+rust-version = "1.87"
+authors = ["Nathan Strange <info@visviva.space>"]
 description = "Runge-Kutta-Fehlberg 7(8) integrator for spacecraft trajectory propagation"
 license = "MIT"
 repository = "https://github.com/VisVivaSpace/rkf78"
+documentation = "https://docs.rs/rkf78"
+homepage = "https://github.com/VisVivaSpace/rkf78"
+readme = "README.md"
 keywords = ["ode", "integrator", "runge-kutta", "astrodynamics", "trajectory"]
 categories = ["science", "simulation", "mathematics"]
+exclude = ["tasks/", "notes/", ".claude/"]
 
 [dependencies]
 # Intentionally minimal - no external deps for core functionality
@@ -30,6 +36,10 @@ gpu = ["dep:wgpu", "dep:bytemuck", "dep:pollster"]
 [[example]]
 name = "gpu_two_body"
 required-features = ["gpu"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [profile.release]
 lto = true

@@ -179,6 +179,10 @@ See [`examples/README.md`](examples/README.md) for a suggested reading order.
 2. Hairer, E., Norsett, S.P., & Wanner, G. (1993). *"Solving Ordinary Differential Equations I"*. Springer.
 3. Brent, R.P. (1973). *"Algorithms for Minimization without Derivatives"*. Prentice-Hall.
 
+## Development
+
+This project was co-developed with [Claude](https://claude.ai), an AI assistant by Anthropic.
+
 ## License
 
 Licensed under the [MIT License](LICENSE).

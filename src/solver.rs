@@ -7,8 +7,8 @@
 
 use crate::coefficients::{A, B, B_ERR, C, STAGES};
 use crate::events::{
-    hermite_interp, sign_change_detected, BrentError, BrentSolver, EventAction, EventConfig,
-    EventFunction, EventResult,
+    BrentError, BrentSolver, EventAction, EventConfig, EventFunction, EventResult, hermite_interp,
+    sign_change_detected,
 };
 use crate::scalar::{Float, Scalar};
 
@@ -453,7 +453,7 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
 
     /// Integrate from `config.t0` to `config.tf`, recording the full trajectory.
     ///
-    /// Returns a [`Solution`] that supports Hermite cubic interpolation at
+    /// Returns a [`crate::Solution`] that supports Hermite cubic interpolation at
     /// arbitrary times within the integration span, plus the final `(t, y)`.
     ///
     /// **Cost:** One extra RHS evaluation per accepted step (to obtain the

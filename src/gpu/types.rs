@@ -18,11 +18,11 @@ use bytemuck::{Pod, Zeroable};
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct GpuState {
-    /// Position [km]: x, y, z
+    /// Position (km): x, y, z
     pub position: [f32; 3],
-    /// Velocity [km/s]: vx, vy, vz
+    /// Velocity (km/s): vx, vy, vz
     pub velocity: [f32; 3],
-    /// Current epoch [seconds from reference]
+    /// Current epoch (seconds from reference]
     pub epoch: f32,
     /// Padding for 16-byte alignment
     _pad: f32,
@@ -52,7 +52,7 @@ pub struct TrajectoryStatus {
     pub steps: u32,
     /// Number of rejected steps
     pub rejected: u32,
-    /// Final step size [seconds]
+    /// Final step size (seconds)
     pub h_final: f32,
 }
 
@@ -66,19 +66,19 @@ pub struct TrajectoryStatus {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct GpuIntegrationParams {
-    /// Target epoch [seconds from reference]
+    /// Target epoch (seconds from reference]
     pub t_final: f32,
-    /// Initial step size [seconds]
+    /// Initial step size (seconds)
     pub h_init: f32,
-    /// Minimum step size [seconds]
+    /// Minimum step size (seconds)
     pub h_min: f32,
-    /// Maximum step size [seconds]
+    /// Maximum step size (seconds)
     pub h_max: f32,
     /// Relative tolerance
     pub rtol: f32,
-    /// Absolute tolerance for position [km]
+    /// Absolute tolerance for position (km)
     pub atol_pos: f32,
-    /// Absolute tolerance for velocity [km/s]
+    /// Absolute tolerance for velocity (km/s)
     pub atol_vel: f32,
     /// Maximum integration steps per GPU dispatch
     pub max_steps_per_dispatch: u32,
@@ -102,13 +102,13 @@ impl GpuIntegrationParams {
         }
     }
 
-    /// Set minimum step size [seconds].
+    /// Set minimum step size (seconds).
     pub fn with_h_min(mut self, v: f32) -> Self {
         self.h_min = v;
         self
     }
 
-    /// Set maximum step size [seconds].
+    /// Set maximum step size (seconds).
     pub fn with_h_max(mut self, v: f32) -> Self {
         self.h_max = v;
         self
@@ -120,13 +120,13 @@ impl GpuIntegrationParams {
         self
     }
 
-    /// Set absolute tolerance for position [km].
+    /// Set absolute tolerance for position (km).
     pub fn with_atol_pos(mut self, v: f32) -> Self {
         self.atol_pos = v;
         self
     }
 
-    /// Set absolute tolerance for velocity [km/s].
+    /// Set absolute tolerance for velocity (km/s).
     pub fn with_atol_vel(mut self, v: f32) -> Self {
         self.atol_vel = v;
         self
