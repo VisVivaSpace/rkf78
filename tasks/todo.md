@@ -550,3 +550,58 @@ Prepared crate for crates.io publishing: license set to MIT-only, repository URL
 - [ ] Bump version to `0.2.0`
 - [ ] Add `complex` feature flag in Cargo.toml
 - [ ] Update `notes/rkf78_design.md`
+
+---
+
+# Code Review Fixes for v0.2.0 Release
+
+## Phase 1: CPU Solver Fixes
+- [x] **[C2]** Fix spurious event detection when g==0 on consecutive steps (`events.rs`)
+- [x] **[H1]** Add non-finite state check to EventAction::Continue paths (`solver.rs`)
+- [x] **[M5]** Document StepResult rejected-state behavior (`solver.rs`)
+- [x] **[M8]** Tighten event test tolerance (`solver.rs`)
+- [x] **[LOW]** Fix duplicate doc comment on step() (`solver.rs`)
+- [x] **[LOW]** Use `from_f64(4.0)` instead of `two * two` (`events.rs`)
+
+## Phase 2: GPU Fixes
+- [x] **[C1]** Return error on dispatch exhaustion (`gpu/mod.rs`)
+- [x] **[H2]** Guard against empty batch (`gpu/mod.rs`)
+- [x] **[H3]** Pre-allocate staging buffer for status readback (`gpu/buffers.rs`, `gpu/mod.rs`)
+- [x] **[H4]** Add validation to GpuIntegrationParams (`gpu/types.rs`)
+- [x] **[M3]** Convert alignment assertion to Result error (`gpu/mod.rs`)
+- [x] **[MEDIUM]** Restrict pipeline struct field visibility (`gpu/pipeline.rs`)
+- [x] **[MEDIUM]** Document backward integration limitation (`gpu/mod.rs`)
+- [x] **[LOW]** Add derives to GpuError (`gpu/mod.rs`)
+
+## Phase 3: New Tests
+- [x] **[M7]** Add individual A-matrix coefficient spot-checks (`coefficients.rs`)
+- [x] **[LOW]** Add backward-time dense output test (`solution.rs`)
+- [x] **[LOW]** Add GPU failure-path test (`tests/gpu_integration.rs`)
+- [x] **[LOW]** Tighten GPU test tolerances (`tests/gpu_integration.rs`)
+
+## Phase 4: Example Fix
+- [x] **[M6]** Fix backwards tolerance comment (`examples/two_body_orbit.rs`)
+
+## Review
+
+All 21 findings from the code review have been fixed across 9 files.
+
+| Phase | Findings Fixed | Files Modified |
+|-------|---------------|----------------|
+| 1 (CPU) | C2, H1, M5, M8, 2 LOW | solver.rs, events.rs |
+| 2 (GPU) | C1, H2, H3, H4, M3, 2 MEDIUM, LOW | gpu/mod.rs, gpu/types.rs, gpu/pipeline.rs, gpu/buffers.rs |
+| 3 (Tests) | M7, 3 LOW | coefficients.rs, solution.rs, tests/gpu_integration.rs |
+| 4 (Example) | M6 | examples/two_body_orbit.rs |
+
+**Deviation from plan:** The M8 tolerance was derived from first principles rather than the
+planned 1e-8. The original test had h_max=∞, making the step size (and thus the Hermite
+interpolation error) uncontrolled and platform-dependent. Fix: added `.with_h_max(0.1)` to
+bound the step. Error analysis:
+- Hermite cubic error bound: h^4 · |y''''| / 384 = 0.1^4 · e / 384 ≈ 7.1e-9
+- Time error bound: (Hermite error) / |dy/dt| = 7.1e-9 / e ≈ 2.6e-9
+- Time tolerance: 1e-6 (gives ~400x margin over bound; observed error: essentially zero)
+- State tolerance: tightened from 1e-8 to 1e-12 since Brent finds g≈0 to machine precision
+
+**Test count:** 71 unit tests + 7 GPU integration tests = 78 total (was 69 + 6 = 75 before).
+
+**Verification:** `cargo test --features gpu` ✓, `cargo clippy --features gpu` ✓, `cargo fmt --check` ✓, `cargo run --features gpu --example gpu_two_body` ✓

@@ -285,6 +285,40 @@ mod tests {
     }
 
     #[test]
+    fn test_dense_output_backward() {
+        // Integrate backward: t0=2π → tf=0, verify solution.eval() works
+        let sys = HarmonicOscillator { omega: 1.0 };
+        let tf = 2.0 * std::f64::consts::PI;
+        let y0_at_2pi = [tf.cos(), -tf.sin()]; // [1.0, ~0.0]
+
+        let tol = Tolerances::new(1e-12, 1e-12);
+        let mut solver = Rkf78::new(tol);
+        let config = IntegrationConfig::new(tf, 0.0, 0.1).with_h_max(0.5);
+
+        let (t_final, _, sol) = solver.integrate_dense(&sys, &config, &y0_at_2pi).unwrap();
+        assert!((t_final - 0.0).abs() < 1e-10, "Should integrate to t=0");
+        assert!(sol.len() >= 2, "Solution needs at least 2 points");
+
+        // Evaluate at several interior points
+        let test_times = [5.0, 4.0, 3.0, 2.0, 1.0, 0.5];
+        for &t in &test_times {
+            let y = sol.eval(t).expect("eval should succeed for interior t");
+            let y_exact = [t.cos(), -t.sin()];
+            let err = (y[0] - y_exact[0]).abs();
+            assert!(
+                err < 1e-3,
+                "Backward dense eval at t={}: error {:.2e} exceeds threshold",
+                t,
+                err
+            );
+        }
+
+        // Boundary: out of range should be None
+        assert!(sol.eval(tf + 0.1).is_none(), "Beyond t0 should be None");
+        assert!(sol.eval(-0.1).is_none(), "Before tf should be None");
+    }
+
+    #[test]
     fn test_dense_output_convergence_order() {
         // Verify O(h^4) convergence of Hermite cubic interpolation.
         // Use loose integrator tolerance so the adaptive controller actually

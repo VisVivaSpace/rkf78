@@ -382,4 +382,65 @@ mod tests {
         assert!((B[5] - 34.0 / 105.0).abs() < TOL);
         assert!((B[6] - 9.0 / 35.0).abs() < TOL);
     }
+
+    #[test]
+    fn test_a_matrix_spot_checks() {
+        // Spot-check individual A[i][j] values against exact rational fractions
+        // from NASA TR R-287, Table X. These target the complex rows (8-12)
+        // where transcription errors are most likely.
+
+        // Row 8: A[8][4] = 704/45
+        assert!(
+            (A[8][4] - 704.0 / 45.0).abs() < TOL,
+            "A[8][4] = {}, expected 704/45 = {}",
+            A[8][4],
+            704.0 / 45.0
+        );
+
+        // Row 10: A[10][0] = 2383/4100
+        assert!(
+            (A[10][0] - 2383.0 / 4100.0).abs() < TOL,
+            "A[10][0] = {}, expected 2383/4100 = {}",
+            A[10][0],
+            2383.0 / 4100.0
+        );
+
+        // Row 12: A[12][5] = -289/82
+        assert!(
+            (A[12][5] - (-289.0 / 82.0)).abs() < TOL,
+            "A[12][5] = {}, expected -289/82 = {}",
+            A[12][5],
+            -289.0 / 82.0
+        );
+
+        // Row 9: A[9][4] = -976/135
+        assert!(
+            (A[9][4] - (-976.0 / 135.0)).abs() < TOL,
+            "A[9][4] = {}, expected -976/135 = {}",
+            A[9][4],
+            -976.0 / 135.0
+        );
+
+        // Row 6: A[6][3] = 125/108
+        assert!(
+            (A[6][3] - 125.0 / 108.0).abs() < TOL,
+            "A[6][3] = {}, expected 125/108 = {}",
+            A[6][3],
+            125.0 / 108.0
+        );
+
+        // Row 12: A[12][11] = 1
+        assert!(
+            (A[12][11] - 1.0).abs() < TOL,
+            "A[12][11] = {}, expected 1.0",
+            A[12][11]
+        );
+
+        // Row 8: A[8][7] = 3
+        assert!(
+            (A[8][7] - 3.0).abs() < TOL,
+            "A[8][7] = {}, expected 3.0",
+            A[8][7]
+        );
+    }
 }

@@ -137,6 +137,42 @@ impl GpuIntegrationParams {
         self.max_steps_per_dispatch = v;
         self
     }
+
+    /// Validate that all parameters are physically reasonable.
+    pub(crate) fn validate(&self) -> Result<(), super::GpuError> {
+        let mut errors = Vec::new();
+
+        if !self.t_final.is_finite() || self.t_final <= 0.0 {
+            errors.push("t_final must be finite and positive");
+        }
+        if !self.h_init.is_finite() || self.h_init <= 0.0 {
+            errors.push("h_init must be finite and positive");
+        }
+        if !self.h_min.is_finite() || self.h_min <= 0.0 {
+            errors.push("h_min must be finite and positive");
+        }
+        if !self.h_max.is_finite() || self.h_max < self.h_min {
+            errors.push("h_max must be finite and >= h_min");
+        }
+        if !self.rtol.is_finite() || self.rtol <= 0.0 {
+            errors.push("rtol must be finite and positive");
+        }
+        if !self.atol_pos.is_finite() || self.atol_pos <= 0.0 {
+            errors.push("atol_pos must be finite and positive");
+        }
+        if !self.atol_vel.is_finite() || self.atol_vel <= 0.0 {
+            errors.push("atol_vel must be finite and positive");
+        }
+        if self.max_steps_per_dispatch == 0 {
+            errors.push("max_steps_per_dispatch must be > 0");
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(super::GpuError::InvalidParams(errors.join("; ")))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -168,6 +204,27 @@ mod tests {
             32,
             "GpuIntegrationParams must be 32 bytes for WGSL alignment"
         );
+    }
+
+    #[test]
+    fn test_gpu_params_validation_defaults_ok() {
+        let params = GpuIntegrationParams::new(3600.0, 10.0);
+        assert!(params.validate().is_ok());
+    }
+
+    #[test]
+    fn test_gpu_params_validation_catches_bad_values() {
+        let params = GpuIntegrationParams::new(3600.0, 10.0)
+            .with_rtol(0.0)
+            .with_h_min(-1.0);
+        let err = params.validate().unwrap_err();
+        match err {
+            crate::gpu::GpuError::InvalidParams(msg) => {
+                assert!(msg.contains("h_min"), "should mention h_min: {msg}");
+                assert!(msg.contains("rtol"), "should mention rtol: {msg}");
+            }
+            _ => panic!("expected InvalidParams"),
+        }
     }
 
     #[test]

@@ -340,6 +340,11 @@ pub(crate) fn sign_change_detected<R: Float>(
     g_new: R,
     direction: EventDirection,
 ) -> bool {
+    if g_old == R::ZERO && g_new == R::ZERO {
+        // Both endpoints exactly at zero — not a new crossing
+        return false;
+    }
+
     if g_old * g_new > R::ZERO {
         // No sign change
         return false;
@@ -425,6 +430,7 @@ pub(crate) fn hermite_interp_derivative<T: Scalar, const N: usize>(
 
     let two = T::Real::TWO;
     let three = T::Real::from_f64(3.0);
+    let four = T::Real::from_f64(4.0);
     let six = T::Real::from_f64(6.0);
 
     // Derivatives of Hermite basis functions w.r.t. alpha, divided by dt
@@ -433,7 +439,7 @@ pub(crate) fn hermite_interp_derivative<T: Scalar, const N: usize>(
     // d(h01)/dt = (6α - 6α²) / dt
     // d(h11)/dt = (-2α + 3α²) / dt
     let dh00 = (-six * alpha + six * a2) / dt;
-    let dh10 = (T::Real::ONE - two * two * alpha + three * a2) / dt;
+    let dh10 = (T::Real::ONE - four * alpha + three * a2) / dt;
     let dh01 = (six * alpha - six * a2) / dt;
     let dh11 = (-two * alpha + three * a2) / dt;
 
@@ -523,6 +529,11 @@ mod tests {
         // No sign change
         assert!(!sign_change_detected(1.0_f64, 2.0, EventDirection::Any));
         assert!(!sign_change_detected(-1.0_f64, -2.0, EventDirection::Any));
+
+        // Both zero — not a new crossing (C2 fix)
+        assert!(!sign_change_detected(0.0_f64, 0.0, EventDirection::Any));
+        assert!(!sign_change_detected(0.0_f64, 0.0, EventDirection::Rising));
+        assert!(!sign_change_detected(0.0_f64, 0.0, EventDirection::Falling));
     }
 
     #[test]

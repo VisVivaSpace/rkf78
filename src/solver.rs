@@ -62,9 +62,13 @@ impl<T: Scalar, const N: usize> StepObserver<T, N> for () {
 #[derive(Debug, Clone, Copy)]
 #[must_use]
 pub struct StepResult<T: Scalar, const N: usize> {
-    /// New state after the step (8th order solution)
+    /// New state after the step (8th order solution).
+    ///
+    /// **Note:** This field is populated even on rejected steps. Only use when `accepted == true`.
     pub y: [T; N],
-    /// New time value
+    /// New time value.
+    ///
+    /// **Note:** This field is populated even on rejected steps. Only use when `accepted == true`.
     pub t: T::Real,
     /// Normalized error estimate (should be <= 1.0 for acceptance)
     pub error: T::Real,
@@ -296,11 +300,7 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
         self
     }
 
-    /// Perform a single integration step
-    ///
-    /// This computes the 13 stages, forms the 8th and 7th order solutions,
-    /// estimates the error, and determines if the step should be accepted.
-    /// Perform a single integration step
+    /// Perform a single integration step.
     ///
     /// This computes the 13 stages, forms the 8th and 7th order solutions,
     /// estimates the error, and determines if the step should be accepted.
@@ -743,6 +743,9 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
                             collected.push(event_result);
                             t = result.t;
                             y = result.y;
+                            if !y.iter().all(|v| v.norm().is_finite()) {
+                                return Err(IntegrationError::NonFiniteState { t });
+                            }
                             g_prev = g_new;
                             h = result.h_next.clamp(config.h_min, config.h_max) * direction;
                             continue;
@@ -897,6 +900,9 @@ impl<T: Scalar, const N: usize> Rkf78<T, N> {
                             collected.push(ev);
                             t = result.t;
                             y = result.y;
+                            if !y.iter().all(|v| v.norm().is_finite()) {
+                                return Err(IntegrationError::NonFiniteState { t });
+                            }
                             g_prev = g_new;
                             h = result.h_next.clamp(config.h_min, config.h_max) * direction;
                             continue;
@@ -1323,14 +1329,10 @@ mod tests {
         let mut solver = Rkf78::new(tol);
 
         let y0 = [1.0];
+        // h_max bounds the step size so the Hermite interpolation error is derivable.
+        let int_config = IntegrationConfig::new(0.0, 10.0, 0.1).with_h_max(0.1);
         let (result, _) = solver
-            .integrate_to_event(
-                &sys,
-                &event,
-                &config,
-                &IntegrationConfig::new(0.0, 10.0, 0.1),
-                &y0,
-            )
+            .integrate_to_event(&sys, &event, &config, &int_config, &y0)
             .unwrap();
 
         match result {
@@ -1340,16 +1342,23 @@ mod tests {
                 println!("  g = {:.3e}", ev.g_value);
                 println!("  iterations: {}", ev.iterations);
 
-                // Should find t ~ 1.0
-                // Tolerance limited by linear state interpolation between steps
+                // Event time error is dominated by Hermite O(h^4) interpolation
+                // within the bracketing step:
+                //   |δt| ≤ h^4 · |y''''| / (384 · |dy/dt|)
+                //        = 0.1^4 · e / (384 · e) = 1e-4/384 ≈ 2.6e-7
+                // Tolerance 1e-6 gives ~4x margin over the analytical bound.
                 assert!(
-                    (ev.t - 1.0).abs() < 0.01,
-                    "Event time {} should be ~1.0",
-                    ev.t
+                    (ev.t - 1.0).abs() < 1e-6,
+                    "Event time {} should be ~1.0 (error {:.3e})",
+                    ev.t,
+                    (ev.t - 1.0).abs()
                 );
+                // y is evaluated by Hermite at the Brent root where g≈0,
+                // so y_interp ≈ e to machine precision (g = y - e ≈ 0).
                 assert!(
-                    (ev.y[0] - std::f64::consts::E).abs() < 0.01,
-                    "y should be ~e"
+                    (ev.y[0] - std::f64::consts::E).abs() < 1e-12,
+                    "y should be ~e (error {:.3e})",
+                    (ev.y[0] - std::f64::consts::E).abs()
                 );
             }
             IntegrationResult::Completed { t, .. } => {

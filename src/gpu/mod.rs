@@ -31,7 +31,7 @@ use pipeline::Rkf78GpuPipeline;
 use wgpu::util::DeviceExt;
 
 /// Errors from GPU operations.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum GpuError {
     /// No suitable GPU adapter was found.
     AdapterNotFound,
@@ -39,6 +39,10 @@ pub enum GpuError {
     DeviceCreationFailed(String),
     /// GPU buffer readback failed.
     ReadbackFailed(String),
+    /// Invalid integration or force parameters.
+    InvalidParams(String),
+    /// GPU dispatch limit reached without all trajectories completing.
+    MaxDispatchesExhausted,
 }
 
 impl std::fmt::Display for GpuError {
@@ -47,6 +51,13 @@ impl std::fmt::Display for GpuError {
             GpuError::AdapterNotFound => write!(f, "No suitable GPU adapter found"),
             GpuError::DeviceCreationFailed(msg) => write!(f, "GPU device creation failed: {}", msg),
             GpuError::ReadbackFailed(msg) => write!(f, "GPU buffer readback failed: {}", msg),
+            GpuError::InvalidParams(msg) => write!(f, "Invalid parameters: {}", msg),
+            GpuError::MaxDispatchesExhausted => {
+                write!(
+                    f,
+                    "GPU dispatch limit reached without all trajectories completing"
+                )
+            }
         }
     }
 }
@@ -106,6 +117,10 @@ impl GpuBatchPropagator {
     /// (bounded by `max_steps_per_dispatch`), re-dispatches until all are
     /// done or failed.
     ///
+    /// **Note:** The GPU propagator only supports forward integration
+    /// (`t_final` > initial epoch). Backward integration is not supported
+    /// and will return immediately with status=1.
+    ///
     /// # Arguments
     /// * `initial_states` — Starting state for each trajectory
     /// * `params` — Integration parameters (uniform across the batch)
@@ -117,21 +132,27 @@ impl GpuBatchPropagator {
     /// `(final_states, statuses)` — one entry per trajectory
     ///
     /// # Errors
-    /// Returns `GpuError::ReadbackFailed` if GPU buffer readback fails.
-    ///
-    /// # Panics
-    /// Panics if `size_of::<P>()` is not a multiple of 16 (WGSL uniform alignment).
+    /// - `GpuError::InvalidParams` if params fail validation or force params size is not 16-byte aligned.
+    /// - `GpuError::ReadbackFailed` if GPU buffer readback fails.
+    /// - `GpuError::MaxDispatchesExhausted` if trajectories don't complete within the dispatch limit.
     pub fn propagate_batch<P: bytemuck::Pod>(
         &self,
         initial_states: &[GpuState],
         params: &GpuIntegrationParams,
         force_params: &P,
     ) -> Result<(Vec<GpuState>, Vec<TrajectoryStatus>), GpuError> {
-        assert!(
-            std::mem::size_of::<P>().is_multiple_of(16),
-            "Force params struct must be 16-byte aligned for WGSL uniform buffer (size {} is not a multiple of 16)",
-            std::mem::size_of::<P>()
-        );
+        if initial_states.is_empty() {
+            return Ok((Vec::new(), Vec::new()));
+        }
+
+        if !std::mem::size_of::<P>().is_multiple_of(16) {
+            return Err(GpuError::InvalidParams(format!(
+                "Force params size {} is not a multiple of 16 bytes",
+                std::mem::size_of::<P>()
+            )));
+        }
+
+        params.validate()?;
         let n = initial_states.len();
         let device = &self.pipeline.device;
         let queue = &self.pipeline.queue;
@@ -199,6 +220,15 @@ impl GpuBatchPropagator {
         let workgroup_size = 64usize;
         let num_workgroups = n.div_ceil(workgroup_size) as u32;
 
+        // Pre-allocate staging buffer for status readback (reused each dispatch)
+        let status_byte_size = (n * std::mem::size_of::<TrajectoryStatus>()) as u64;
+        let status_staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Status Staging"),
+            size: status_byte_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         // Multi-dispatch loop: keep dispatching until all trajectories are done
         let max_dispatches = 1000u32;
         for _ in 0..max_dispatches {
@@ -216,9 +246,14 @@ impl GpuBatchPropagator {
             }
             queue.submit(Some(encoder.finish()));
 
-            // Read back status to check completion
-            let statuses: Vec<TrajectoryStatus> =
-                buffers::read_buffer(device, queue, &status_buffer, n)?;
+            // Read back status to check completion (reusing staging buffer)
+            let statuses: Vec<TrajectoryStatus> = buffers::read_buffer_with_staging(
+                device,
+                queue,
+                &status_buffer,
+                &status_staging,
+                status_byte_size,
+            )?;
 
             let all_done = statuses.iter().all(|s| s.status == 1 || s.status == 2);
             if all_done {
@@ -229,11 +264,7 @@ impl GpuBatchPropagator {
             }
         }
 
-        // If we get here, read whatever we have
-        let final_states: Vec<GpuState> = buffers::read_buffer(device, queue, &current_buffer, n)?;
-        let final_statuses: Vec<TrajectoryStatus> =
-            buffers::read_buffer(device, queue, &status_buffer, n)?;
-        Ok((final_states, final_statuses))
+        Err(GpuError::MaxDispatchesExhausted)
     }
 }
 

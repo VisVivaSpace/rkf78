@@ -19,7 +19,6 @@ pub fn read_buffer<T: Pod>(
 ) -> Result<Vec<T>, GpuError> {
     let byte_size = (count * std::mem::size_of::<T>()) as u64;
 
-    // Create a staging buffer for readback
     let staging = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Staging Buffer"),
         size: byte_size,
@@ -27,11 +26,28 @@ pub fn read_buffer<T: Pod>(
         mapped_at_creation: false,
     });
 
+    read_buffer_with_staging(device, queue, buffer, &staging, byte_size)
+}
+
+/// Read data using a pre-allocated staging buffer.
+///
+/// Use this when reading the same buffer repeatedly (e.g., in a dispatch loop)
+/// to avoid creating a new staging buffer on every readback.
+///
+/// # Errors
+/// Returns `GpuError::ReadbackFailed` if the buffer mapping or channel communication fails.
+pub fn read_buffer_with_staging<T: Pod>(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    buffer: &wgpu::Buffer,
+    staging: &wgpu::Buffer,
+    byte_size: u64,
+) -> Result<Vec<T>, GpuError> {
     // Copy from source to staging
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("Readback Encoder"),
     });
-    encoder.copy_buffer_to_buffer(buffer, 0, &staging, 0, byte_size);
+    encoder.copy_buffer_to_buffer(buffer, 0, staging, 0, byte_size);
     queue.submit(Some(encoder.finish()));
 
     // Map and read

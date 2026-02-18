@@ -5,15 +5,15 @@ use std::borrow::Cow;
 use super::GpuError;
 
 /// Holds the wgpu device, queue, compute pipeline, and bind group layout.
-pub struct Rkf78GpuPipeline {
+pub(crate) struct Rkf78GpuPipeline {
     /// The wgpu device.
-    pub device: wgpu::Device,
+    pub(super) device: wgpu::Device,
     /// The wgpu command queue.
-    pub queue: wgpu::Queue,
+    pub(super) queue: wgpu::Queue,
     /// The compiled compute pipeline.
-    pub pipeline: wgpu::ComputePipeline,
+    pub(super) pipeline: wgpu::ComputePipeline,
     /// The bind group layout for buffer bindings.
-    pub bind_group_layout: wgpu::BindGroupLayout,
+    pub(super) bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl Rkf78GpuPipeline {

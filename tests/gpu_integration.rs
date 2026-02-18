@@ -123,10 +123,10 @@ fn test_circular_orbit_gpu_vs_cpu() {
         pos_err, gpu_statuses[0].steps, gpu_statuses[0].rejected
     );
 
-    // 100 km tolerance (f32 accumulation over one orbit)
+    // Observed error is sub-0.1 km; 1 km threshold gives 10x margin
     assert!(
-        pos_err < 100.0,
-        "Position error {:.1} km exceeds 100 km threshold",
+        pos_err < 1.0,
+        "Position error {:.4} km exceeds 1 km threshold",
         pos_err
     );
 }
@@ -251,10 +251,10 @@ fn test_elliptical_orbit_gpu_vs_cpu() {
         e, pos_err, ra
     );
 
-    // Elliptical orbits accumulate more error; allow up to 500 km
+    // Observed error is sub-0.1 km; 5 km threshold gives generous margin
     assert!(
-        pos_err < 500.0,
-        "Position error {:.1} km exceeds 500 km threshold",
+        pos_err < 5.0,
+        "Position error {:.4} km exceeds 5 km threshold",
         pos_err
     );
 }
@@ -290,7 +290,36 @@ fn test_step_rejection_gpu() {
     );
 }
 
-// ─── Test 6: Multi-dispatch completion ─────────────────────────────────
+// ─── Test 6: Failure path (step-size-too-small → status=2) ────────────
+
+#[test]
+fn test_gpu_failure_path() {
+    let r0 = 6878.0f32;
+    let period = orbital_period(r0 as f64) as f32;
+
+    let propagator = GpuBatchPropagator::new(TWO_BODY_WGSL).unwrap();
+    let state = circular_orbit_state(r0);
+
+    // Extremely tight tolerances with large h_min — forces step-size-too-small failure.
+    let params = GpuIntegrationParams::new(period, 60.0)
+        .with_h_min(500.0) // h_min larger than what the solver can accept
+        .with_h_max(600.0)
+        .with_rtol(1e-12) // impossibly tight for f32
+        .with_atol_pos(1e-12)
+        .with_atol_vel(1e-12);
+
+    let (_, gpu_statuses) = propagator
+        .propagate_batch(&[state], &params, &FORCE_PARAMS)
+        .unwrap();
+
+    assert_eq!(
+        gpu_statuses[0].status, 2,
+        "Expected status=2 (failed) with impossible tolerance+h_min combo, got status={}",
+        gpu_statuses[0].status
+    );
+}
+
+// ─── Test 7: Multi-dispatch completion ─────────────────────────────────
 
 #[test]
 fn test_multi_dispatch_completion() {

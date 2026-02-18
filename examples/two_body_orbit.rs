@@ -56,7 +56,7 @@ fn main() {
     // Orbital period: T = 2π √(a³/μ)
     let period = 2.0 * std::f64::consts::PI * (r0.powi(3) / mu).sqrt();
 
-    // Per-component tolerances: tighter on position (km), looser on velocity (km/s)
+    // Per-component tolerances: position atol=1e-12 (km), velocity atol=1e-15 (km/s)
     let atol = [1e-12, 1e-12, 1e-12, 1e-15, 1e-15, 1e-15];
     let rtol = [1e-13; 6];
     let tol = Tolerances::with_components(atol, rtol);
