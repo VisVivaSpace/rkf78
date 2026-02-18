@@ -137,7 +137,7 @@ For a full explanation of the mathematics — Butcher tableau, error estimation,
 
 ```bash
 cargo build            # Build the crate
-cargo test             # Run all tests (~70 tests)
+cargo test             # Run all tests (~78 tests)
 cargo test --features gpu  # Include GPU tests (requires GPU)
 cargo bench            # Run criterion benchmarks
 cargo clippy           # Lint

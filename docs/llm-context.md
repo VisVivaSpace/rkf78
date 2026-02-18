@@ -463,16 +463,27 @@ let (final_states, statuses) = propagator.propagate_batch(&states, &params, &for
 
 ```rust
 // 32-byte state (f32 position, velocity, epoch)
-pub struct GpuState { /* private fields */ }
-impl GpuState {
-    pub fn new(position: [f32; 3], velocity: [f32; 3], epoch: f32) -> Self;
-    pub position: [f32; 3],  // read-only access
+pub struct GpuState {
+    pub position: [f32; 3],
     pub velocity: [f32; 3],
     pub epoch: f32,
+    _pad: f32,  // private, for 16-byte alignment
+}
+impl GpuState {
+    pub fn new(position: [f32; 3], velocity: [f32; 3], epoch: f32) -> Self;
 }
 
-// 32-byte integration params
-pub struct GpuIntegrationParams { /* private fields */ }
+// 32-byte integration params (no force model params — those are user-supplied separately)
+pub struct GpuIntegrationParams {
+    pub t_final: f32,
+    pub h_init: f32,
+    pub h_min: f32,
+    pub h_max: f32,
+    pub rtol: f32,
+    pub atol_pos: f32,
+    pub atol_vel: f32,
+    pub max_steps_per_dispatch: u32,
+}
 impl GpuIntegrationParams {
     pub fn new(t_final: f32, h_init: f32) -> Self;  // sensible defaults
     pub fn with_h_min(self, v: f32) -> Self;
@@ -481,6 +492,7 @@ impl GpuIntegrationParams {
     pub fn with_atol_pos(self, v: f32) -> Self;
     pub fn with_atol_vel(self, v: f32) -> Self;
     pub fn with_max_steps_per_dispatch(self, v: u32) -> Self;
+    // validate() is called internally by propagate_batch
 }
 
 // 16-byte trajectory status
@@ -495,6 +507,8 @@ pub enum GpuError {
     AdapterNotFound,
     DeviceCreationFailed(String),
     ReadbackFailed(String),
+    InvalidParams(String),
+    MaxDispatchesExhausted,
 }
 
 pub struct GpuBatchPropagator { /* private */ }
@@ -529,7 +543,7 @@ Bindings 0-3 are reserved by the engine (initial states, current states, status,
 3. **Event state uses Hermite cubic interpolation**: O(h^4) accuracy in the event state; event time is found to `root_tol` precision by Brent's method.
 4. **Not for stiff problems**: explicit method; step size will collapse on stiff systems.
 5. **GPU uses f32**: ~7 significant digits vs CPU f64 ~15 digits. GPU energy conservation is ~1e-6 vs CPU ~1e-12.
-6. **GPU force params must be 16-byte aligned**: `size_of::<P>()` must be a multiple of 16, enforced by assertion at runtime.
+6. **GPU force params must be 16-byte aligned**: `size_of::<P>()` must be a multiple of 16, enforced by `Err(InvalidParams(...))` at runtime.
 7. **Events are returned, not stored**: `integrate_to_event` returns `(IntegrationResult, Vec<EventResult>)`. There is no `collected_events` field on the solver.
 
 ## Tolerance Quick-Reference
