@@ -10,13 +10,12 @@
 
 use rkf78::{IntegrationConfig, OdeSystem, Rkf78, Tolerances};
 
-/// Keplerian two-body problem: d²r/dt² = -μ r / |r|³
-///
-/// State vector: [x, y, z, vx, vy, vz]  (km, km/s)
+/// Keplerian two-body force model.
 struct TwoBody {
     mu: f64,
 }
 
+/// State vector: [x, y, z, vx, vy, vz] (km, km/s)
 impl OdeSystem<f64, 6> for TwoBody {
     fn rhs(&self, _t: f64, y: &[f64; 6], dydt: &mut [f64; 6]) {
         let r2 = y[0] * y[0] + y[1] * y[1] + y[2] * y[2];
@@ -29,7 +28,7 @@ impl OdeSystem<f64, 6> for TwoBody {
         dydt[1] = y[4];
         dydt[2] = y[5];
 
-        // dv/dt = -μ r / |r|³
+        // dv/dt = -μ/r³ * r_vec
         dydt[3] = -mu_r3 * y[0];
         dydt[4] = -mu_r3 * y[1];
         dydt[5] = -mu_r3 * y[2];

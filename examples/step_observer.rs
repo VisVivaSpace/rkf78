@@ -11,8 +11,6 @@ use rkf78::{IntegrationConfig, OdeSystem, Rkf78, Scalar, StepObserver, Tolerance
 /// Lotka-Volterra predator-prey model:
 ///   dx/dt =  αx - βxy     (prey growth - predation)
 ///   dy/dt = δxy - γy       (predator growth - natural death)
-///
-/// State vector: [prey, predator]
 struct LotkaVolterra {
     alpha: f64, // prey birth rate
     beta: f64,  // predation rate
@@ -20,6 +18,7 @@ struct LotkaVolterra {
     gamma: f64, // predator death rate
 }
 
+/// State vector: [prey, predator]
 impl OdeSystem<f64, 2> for LotkaVolterra {
     fn rhs(&self, _t: f64, y: &[f64; 2], dydt: &mut [f64; 2]) {
         let prey = y[0];

@@ -8,12 +8,11 @@
 use rkf78::{IntegrationConfig, OdeSystem, Rkf78, Tolerances};
 
 /// Simple harmonic oscillator: y'' + ω²y = 0
-///
-/// State vector: [y, y']
 struct HarmonicOscillator {
     omega: f64,
 }
 
+/// State vector: [y, y']
 impl OdeSystem<f64, 2> for HarmonicOscillator {
     fn rhs(&self, _t: f64, y: &[f64; 2], dydt: &mut [f64; 2]) {
         dydt[0] = y[1];

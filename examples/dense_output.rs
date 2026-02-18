@@ -9,13 +9,12 @@
 use rkf78::{IntegrationConfig, OdeSystem, Rkf78, Tolerances};
 
 /// Damped harmonic oscillator: y'' + 2ζω y' + ω²y = 0
-///
-/// State vector: [y, y']
 struct DampedOscillator {
     omega: f64,
     zeta: f64,
 }
 
+/// State vector: [y, y']
 impl OdeSystem<f64, 2> for DampedOscillator {
     fn rhs(&self, _t: f64, y: &[f64; 2], dydt: &mut [f64; 2]) {
         dydt[0] = y[1];
