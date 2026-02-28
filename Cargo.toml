@@ -1,6 +1,6 @@
 [package]
 name = "rkf78"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.87"
 authors = ["Nathan Strange <info@visviva.space>"]
@@ -24,6 +24,7 @@ pollster = { version = "0.4", optional = true }
 [dev-dependencies]
 approx = "0.5"
 criterion = "0.5"
+ode_solvers = "0.4"  # For cross-validation tests
 
 [[bench]]
 name = "integration"

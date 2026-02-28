@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-02-27
+
+### Added
+
+- Cross-validation tests comparing RKF78 against `ode_solvers` Dop853 (Dormand-Prince 8th-order)
+  - Harmonic oscillator test (3.3e-11 agreement)
+  - Two-body circular orbit test (0.66 μm agreement)
+  - Two-body eccentric orbit test (2.0 km agreement after bug fix)
+  - Energy conservation comparison test
+- `ode_solvers` crate as dev-dependency for cross-validation
+
+### Fixed
+
+- Eccentric orbit cross-validation test: corrected `dx` parameter from 10.0 to 1.0
+  - Improved agreement from 11.5 km to 2.0 km (5.7× better accuracy)
+  - Root cause: eccentric orbits need finer time resolution at periapsis
+
 ## [0.2.0] - 2026-02-17
 
 ### Added
@@ -57,5 +74,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Examples: `harmonic_oscillator`, `two_body_orbit`, `event_detection`
 - Benchmarks via criterion
 
+[0.2.1]: https://github.com/VisVivaSpace/rkf78/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/VisVivaSpace/rkf78/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/VisVivaSpace/rkf78/releases/tag/v0.1.0
